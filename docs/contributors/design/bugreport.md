@@ -194,7 +194,9 @@ Both mechanisms accept a required `<type>` argument:
 | Type | Description |
 |------|-------------|
 | `safe` | Privacy-conscious report. Sensitive sections omitted or redacted. Suitable for sharing in a public GitHub issue. Includes a "Review before sharing" notice. |
-| `unsafe` | Author/developer report. No omissions, no redaction. Includes a prominent "**Do not share publicly**" warning banner. |
+| `unsafe` | Author/developer report. No omissions, and no redaction **except `--env` values** (below). Includes a prominent "**Do not share publicly**" warning banner. |
+
+**The one thing an `unsafe` report redacts** is the value half of each `--env KEY=VAL` on the command line. Everything else an unsafe report keeps is diagnostic material — logs, agent output, config — and an env value never is: the variable's name is the whole of what a reader of that line needs. The user had no way to keep such a value off the command line before `--env-file` existed, and a report is a file people attach to a public issue, so "unsafe" cannot mean "copies this one through". `--env-file`'s own value is a path and is **not** redacted: it is diagnostic, and the secrets are in the file, which no report reads.
 
 ### Output filename
 
@@ -310,7 +312,7 @@ Columns indicate whether a section is included in `safe` and `unsafe` reports. *
 | Section | safe | unsafe |
 |---------|------|------|
 | 1. Header | ✓ | ✓ |
-| 2. Command invocation *(flag)* | ✓ redacted | ✓ |
+| 2. Command invocation *(flag)* | ✓ redacted | ✓ `--env` values redacted |
 | 3. System | ✓ | ✓ |
 | 4. Backends | ✓ | ✓ |
 | 5. Configuration | ✓ sanitized | ✓ |
@@ -332,7 +334,13 @@ Columns indicate whether a section is included in `safe` and `unsafe` reports. *
 
 ### 2. Command Invocation *(flag only)*
 
-Full `os.Args` as a fenced code block. In `safe` mode, values for `--prompt` / `-p` flags are redacted: `--prompt [REDACTED]`. `--prompt-file` / `-P` paths are not redacted (the path itself is not sensitive; file contents are never included).
+Full `os.Args` as a fenced code block.
+
+In `safe` mode, values for `--prompt` / `-p` flags are redacted: `--prompt [REDACTED]`. `--prompt-file` / `-f` paths are not redacted (the path itself is not sensitive; file contents are never included).
+
+In **both** modes, `--env` values are redacted to `KEY=[REDACTED]`, keeping the variable's name — see [Report types](#report-types) for why this one crosses the safe/unsafe line. A `--env` argument with no `=` is replaced whole: it is malformed as a value, so it is not a bare name to be published. `--env-file` is not matched (its value is a path).
+
+**The exit line (section 14) has no redactor of its own, in either mode.** An error's text is printed verbatim, so anything an error message quotes is published — which is why the `--env-file` parser never quotes the file's content and `--env`'s parse error names the occurrence rather than the token. That the surfaces each carry their own rule rather than sharing one is [DF237](findings-unresolved.md).
 
 ### 3. System
 

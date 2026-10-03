@@ -16,11 +16,12 @@ CREATING SANDBOXES (yoloai new)
   --prompt-file, -f   File containing the prompt
   --dir, -d <path>    Auxiliary directory (repeatable)
   --env KEY=VAL       Environment variable (repeatable). Not for secrets:
-                      the value stays on yoloai's command line, where
+                      the value is on yoloai's command line, where
                       other local users can read it with 'ps'
   --env-file <path>   Read env vars from a file of KEY=VAL lines, or from
                       stdin with '-'. Use this for secrets. Also on
-                      start, restart and reset. See: yoloai help security
+                      run, start, restart and reset.
+                      See: yoloai help security
   --port <h:c>        Port mapping (host:container)
   --network-none      Disable network access
   --network-isolated  Allow only agent API traffic (IPv4 iptables allowlist;

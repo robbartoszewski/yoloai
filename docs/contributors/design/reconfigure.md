@@ -25,7 +25,7 @@ Changes that require container recreation and therefore an agent restart:
 | Add an auxiliary directory | `-d <path>[:<mode>]` |
 | Remove an auxiliary directory | `--remove-dir <path>` |
 | Change a directory's mount mode | `-d <path>:<newmode>` (re-specify the dir) |
-| Add or update an env var | `--env KEY=VAL` |
+| Add or update an env var | `--env KEY=VAL`, or `--env-file <path>` for a secret |
 | Remove an env var | `--unset-env KEY` |
 | Change CPU limit | `--cpus <value>` |
 | Change memory limit | `--memory <value>` |
@@ -51,6 +51,7 @@ The command always requires an explicit sandbox name. There are no positional ar
   -d, --dir <path>[=<mountpath>][:<mode>]   Add an auxiliary directory (repeatable)
       --remove-dir <path>                   Remove an auxiliary directory by host path (repeatable)
       --env KEY=VAL                         Add or update an environment variable (repeatable)
+      --env-file <path>                     Add or update them from a file of KEY=VAL lines, or stdin with '-'
       --unset-env KEY                       Remove an environment variable (repeatable)
       --cpus <value>                        CPU limit (e.g. 4, 2.5)
       --memory <value>                      Memory limit (e.g. 8g, 512m)
@@ -80,7 +81,7 @@ At least one flag must be provided; bare `yoloai reconfigure <name>` is an error
 
 - `-d` is **additive**: it adds a directory not already mounted. Re-specifying an existing host path with a different mode is an error — use `--remove-dir` first.
 - `--remove-dir` removes by host path. If the directory has a `:copy` mode and has accumulated changes (unapplied diff), warn and require `--yes` or `--abandon-unapplied` to proceed. Changes are not automatically applied.
-- `--env KEY=VAL` adds or replaces a key. `--unset-env KEY` removes it. Both are additive to the existing env.
+- `--env KEY=VAL` adds or replaces a key. `--unset-env KEY` removes it. Both are additive to the existing env. **Whatever builds this command registers `--env` and `--env-file` as the one pair** (`addEnvFlags` in `internal/cli/lifecycle`) rather than `--env` alone: a reconfigure that only took `--env` would put every re-supplied secret back on argv, which is what `--env-file` exists to prevent, and would be the one verb in the family without it.
 - `--cpus` / `--memory` replace the current value outright.
 - `--agent` replaces the current agent. Agent-state for the previous agent remains on disk but the new agent starts fresh.
 

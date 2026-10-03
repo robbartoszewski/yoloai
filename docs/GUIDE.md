@@ -836,16 +836,16 @@ mv ~/.yoloai/library/trash/<name> ~/.yoloai/library/sandboxes/<name>
 
 - **Originals are protected.** Workdirs use `:copy` mode by default — the agent works on an isolated copy, never your original files. Opt into `:rw` explicitly for live access.
 - **Dangerous directory detection.** Refuses to mount `$HOME`, `/`, or system directories. Append `:force` to override (e.g., `$HOME:force`).
-- **Dirty repo warning.** Prompts if your workdir has uncommitted git changes, so you don't lose work.
+- **Dirty repo warning.** Warns and refuses if your workdir has uncommitted git changes, so you don't lose work; `--allow-dirty` proceeds. It never prompts — widening the scope to include uncommitted work is an explicit flag, not an answer to a question.
 - **Credential brokering (default).** For supported setups the agent's LLM API key is held **host-side** and never enters the sandbox — see [Credential Brokering](#credential-brokering) below. Credentials that aren't brokered (other agents, subscription tokens, unsupported backends) are delivered as files instead (next bullet).
-- **Secrets of your own go in a file, not on the command line.** `--env KEY=VAL` puts the value on yoloai's own command line, where it stays for as long as the sandbox runs — and on macOS and most Linux configurations any other local account can read it with `ps -ww`. Use `--env-file` for anything secret; see [Passing secrets to the sandbox](#passing-secrets-to-the-sandbox).
+- **Secrets of your own go in a file, not on the command line.** `--env KEY=VAL` puts the value on the command line of every yoloai invocation you pass it to, where any other local account can read it with `ps -ww`. Use `--env-file` for anything secret; see [Passing secrets to the sandbox](#passing-secrets-to-the-sandbox).
 - **Credential injection via files.** Non-brokered API keys are mounted as read-only files at `/run/secrets/`, not passed as environment variables. Temp files on the host are cleaned up after container start. Some agents support additional credential sources — for example, on macOS, yoloai checks the macOS Keychain for Claude Code OAuth credentials (service `Claude Code-credentials`). If you're logged in via `claude` CLI, yoloai will automatically detect your credentials even without `~/.claude/.credentials.json` on disk.
 
 ### Passing secrets to the sandbox
 
 The agent's own LLM credential needs none of this — yoloai takes it from its own environment and brokers or mounts it (above). This is for everything else you want the sandbox to have: a registry token, a database password, an API key for the service the agent is working on.
 
-**Use `--env-file`, not `--env`.** A value passed as `--env KEY=VAL` sits on yoloai's command line for the entire life of the sandbox. Process arguments are not private to the user who started the process: on macOS always, and on Linux unless `/proc` is mounted with `hidepid`, so any other local account can read the value with `ps -ww` — and `start`, `restart` and `reset` take `--env` too, so the value is re-exposed on every start. `--env-file` reads the values from a file instead, and the file's path is all that reaches the command line:
+**Use `--env-file`, not `--env`.** A value passed as `--env KEY=VAL` is on the command line of the yoloai process for as long as that command runs — the whole session for `yoloai new --attach` or `run --wait`, a few seconds for a detached `new` or `start`, and a few seconds is enough. Process arguments are not private to the user who started the process: on macOS always, and on Linux unless `/proc` is mounted with `hidepid`, so any other local account can read the value with `ps -ww`. And because `start`, `restart` and `reset` take `--env` too, the value is exposed again on every one of them. `--env-file` reads the values from a file instead, and the file's path is all that reaches the command line:
 
 ```bash
 yoloai new task ./project --env-file ./secrets.env
@@ -857,18 +857,25 @@ printf 'API_TOKEN=%s\n' "$token" | yoloai new task ./project --env-file -
 
 `--env-file` is available on `new`, `run`, `start`, `restart` and `reset`, wherever `--env` is. `--env` keeps working unchanged for values that are not secret.
 
+The path accepts `~` and `${VAR}`, as `--prompt-file` does. `--env-file` takes one file: passing it twice uses the last, like every other path flag here. An empty value — `--env-file "$SECRETS"` with `SECRETS` unset — is an error rather than "no file", because a sandbox that silently starts without the secrets you told it to carry is the outcome this flag exists to prevent.
+
 The file is a list of `KEY=VAL` lines:
 
 - Blank lines are ignored, and so is a line whose first non-whitespace character is `#`.
 - **A `#` anywhere else is part of the value.** Passwords contain them.
 - **The value is literal to the end of the line.** No quote stripping, no `$VAR` or `${VAR}` expansion, trailing spaces kept: `A="x"` sets `A` to `"x"`, quotes included. `.env` files written for a dotenv library that unquotes values will not mean the same thing here.
 - The key is a plain variable name (`[A-Za-z_][A-Za-z0-9_]*`). `export FOO=1` is rejected, as is `FOO = 1`.
-- Setting the same variable twice — twice in the file, or once in the file and once in `--env` — is an error. There is no precedence rule to remember, and nothing is silently discarded.
-- Errors give the line number and never quote the line, so a malformed secret does not end up in your terminal, the sandbox's `logs/cli.jsonl`, or a bug report.
+- Setting the same variable twice — twice in the file, or once in the file and once in `--env` — is an error. There is no precedence rule to remember, and neither value is silently discarded. (Repeating `--env` itself keeps its long-standing behaviour: the last one wins.)
+- CRLF files are fine — a trailing CR is not part of the value — and a leading byte-order mark is ignored. A CR anywhere else, or a NUL, is an error rather than a guess: a CR-only file would otherwise parse as one variable holding the rest of your secrets.
+- Errors give the line number and never quote the line, so a malformed secret does not end up in your terminal or in a bug report's exit line.
 
 **The file's permissions are yours to set.** yoloai reads whatever path you give it and does not insist on `0600`, because the alternative — refusing the file — only pushes the value back onto the command line, which is worse. If the secret is long-lived, `chmod 600` it.
 
-**What yoloai writes down.** The sandbox's environment is never persisted: `--env` and `--env-file` values are re-supplied on each `start`/`restart`/`reset` by design. A bug report (`--bugreport`, `yoloai sandbox bugreport`) records the command line you ran, with `--env` values redacted to `KEY=[REDACTED]` in both the safe and unsafe forms — but it is still worth reading a report before attaching it to an issue.
+**Where the value goes.** Inside the sandbox these are ordinary environment variables for the agent's process, exactly as `--env`'s are — `--env-file` changes how the value reaches yoloai, not how the sandbox sees it. On backends that cannot be handed an environment at launch, yoloai stages the values as owner-only files (`0700` dir, `0600` files) and bind-mounts them at `/run/secrets`, removing the staging directory once the container has started. So on those backends the value touches host disk briefly, readable only by you.
+
+**What yoloai writes down.** A per-sandbox environment is not persisted: `--env` and `--env-file` values are re-supplied on each `start`/`restart`/`reset` by design, and nothing records them in the sandbox's metadata. The exception is the `env:` key in `config.yaml` or a profile, which is a file and stays one — a bug report includes your config and redacts only values whose *key name* reads as sensitive, so a secret under an ordinary-looking name (`DB_DSN`) is published. Keep secrets out of config and in `--env-file`.
+
+A bug report written by `--bugreport` records the command line you ran, with `--env` values redacted to `KEY=[REDACTED]` in both the safe and unsafe forms; `yoloai sandbox <name> bugreport` records no command line at all. It is still worth reading a report before attaching it to an issue.
 
 ### Credential Brokering
 

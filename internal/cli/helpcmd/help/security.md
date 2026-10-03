@@ -20,24 +20,24 @@ CREDENTIAL INJECTION
 
 PASSING YOUR OWN SECRETS
 
-  That covers the agent's credential. For your own -- a registry
-  token, a database password -- use --env-file, not --env:
+  That covers the agent's credential. For your own — a registry
+  token, a database password — use --env-file, not --env:
 
      yoloai new task . --env-file ./secrets.env
      printf 'API_TOKEN=%s\n' "$token" | yoloai new task . --env-file -
 
-  A --env value sits on yoloai's command line for as long as the
-  sandbox runs, and process arguments are not private to your
-  account: on macOS always, and on Linux unless /proc is mounted
-  with hidepid, another local user can read it with 'ps -ww'.
-  start, restart and reset take --env too, so the value is
-  re-exposed on every start. --env-file puts only the path there.
+  A --env value is on the command line of every invocation you pass
+  it to, and process arguments are not private to your account: on
+  macOS always, and on Linux unless /proc is mounted with hidepid,
+  another local user can read it with 'ps -ww'. new, run, start,
+  restart and reset all take --env, so the value is exposed again
+  on each one. --env-file puts only the path there.
 
   The file is KEY=VAL lines. Blank lines and lines starting with #
   are ignored; a # anywhere else is part of the value; the value is
   literal to end of line (no quote stripping, no $VAR expansion).
-  Setting the same variable twice -- in the file, or in both the
-  file and --env -- is an error rather than a silent last-wins.
+  Setting the same variable twice — in the file, or in both the
+  file and --env — is an error rather than a silent last-wins.
   File permissions are yours to set; yoloai reads what you give it.
 
   --env still works, unchanged, for values that are not secret.

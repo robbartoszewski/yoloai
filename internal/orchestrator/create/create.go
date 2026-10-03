@@ -105,7 +105,7 @@ type Options struct {
 	Debug                bool                  // --debug flag (enable entrypoint debug logging)
 	CPUs                 string                // --cpus flag (e.g., "4", "2.5")
 	Memory               string                // --memory flag (e.g., "8g", "512m")
-	Env                  map[string]string     // --env flags (KEY=VAL pairs)
+	Env                  map[string]string     // --env / --env-file (KEY=VAL pairs, already merged at the CLI edge)
 	Isolation            runtime.IsolationMode // --isolation flag (e.g., IsolationModeContainerEnhanced, IsolationModeVM)
 	Runtimes             []string              // --runtime flags (Apple simulator runtimes, e.g., ["ios", "tvos:26.1"])
 	VscodeTunnel         bool                  // --vscode-tunnel flag
