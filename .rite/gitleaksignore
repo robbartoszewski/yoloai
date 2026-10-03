@@ -24,7 +24,8 @@
 # None of the matched text is a secret. Two of them are a contributor's own name
 # used as an example, and say so.
 
-# A placeholder username in prose and in sample command output.
+# Example users in prose and in sample command output. The first three are a
+# placeholder; the fourth is the maintainer's own first name, and says so.
 -:docs/GUIDE.md:rite-hardcoded-macos-home-directory-path:sha256-45c1386eb381f8d5be4342bedf020534  # a placeholder macOS home, three times in the Swift PCH example — twice inside a quoted compiler error
 -:docs/contributors/design/commands.md:rite-hardcoded-linux-home-directory-path:sha256-768d8e132161678a3434401db0b60a64  # a placeholder Linux home, in the example container layout, the caret-encoding example, and three lines of sample creation output
 -:docs/contributors/design/reconfigure.md:rite-hardcoded-linux-home-directory-path:sha256-768d8e132161678a3434401db0b60a64  # the same placeholder Linux home, in one line of sample reconfigure output
