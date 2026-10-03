@@ -1353,19 +1353,41 @@ earlier signal and records nothing else.
 - **Severity:** LOW — it needs a secret in config under a name that reads as ordinary; the common names are covered
 - **Disposition:** UNRESOLVED — PARKED. The instance that prompted it (argv) is fixed; the class is not.
 - **Rides:** **any**.
-- **Description:** A bug report redacts in three independent places, each knowing only its own surface:
+- **Description:** A bug report redacts in four independent places, each knowing only its own surface:
 
   | Surface | Redactor | Rule |
   | --- | --- | --- |
   | The command line (section 2) | `redactPromptArgs`, `redactEnvArgs` | named flags only |
   | Config YAML (section 5) | `sanitizeYAMLConfig` | **key-name keywords only** |
-  | The live log (section 13) | `sanitizeText` | **value patterns only** |
+  | The JSONL sections and the live log (7–12, 13) | `SanitizeJSONLBytes` → `sanitizeText` | **value patterns only** |
+  | The exit line (section 14) | — | **nothing, in either report type** |
 
-  The two value-shaped rules never meet the two name-shaped ones. The pattern set in `sanitizeText` — PEM blocks, known key prefixes, connection strings, JWTs, long hex/base64 — is not applied to the config bytes, and the keyword list is not applied to the log. So whether a secret is published depends on which section it arrived in, not on what it is.
+  The value-shaped rule never meets the name-shaped ones, and the exit line has neither: `WriteExit` prints the error verbatim, so whatever an error message quotes is published. So whether a secret is published depends on which section it arrived in, not on what it is. The pattern set in `sanitizeText` — PEM blocks, known key prefixes, connection strings, JWTs, long hex/base64 — is not applied to the config bytes, and the keyword list is not applied to the logs.
 - **Verified, not inferred.** Rendering a safe report over `env:\n  DB_DSN: postgres://user:hunter2@db.example/app\n  SHORT_TOKEN: abc123def\n` publishes the DSN verbatim and redacts `SHORT_TOKEN` — the first because no keyword matches `DB_DSN`, the second only because its *name* contains "token". The same DSN in the live log is caught by `sanitizeText`'s connection-string pattern. `env:` is the sharp edge because its keys are arbitrary user-chosen names, so the keyword list is being asked to guess them.
-- **The shape, which is the point of filing it:** three redactors for one job, each complete on its own axis and blind on the other. `--env` on argv was the third instance of the same class in two days of looking (the first two: `--prompt`, which is redacted, and the config section, which is this). A fix that keeps the surfaces separate will keep generating these; running every rendered section through `sanitizeText` in safe mode — i.e. one value-shaped pass over the whole document, with the name-shaped rules left as the belt to its braces — is the version that stops.
+- **The shape, which is the point of filing it:** four redactors for one job, each complete on its own axis and blind on the others. `--env` on argv was the third instance of the same class in two days of looking, and the exit line the fourth (the first: `--prompt`, which is redacted; the second: the config section, which is this). A fix that keeps the surfaces separate will keep generating these; running every rendered section through `sanitizeText` in safe mode — i.e. one value-shaped pass over the whole document, with the name-shaped rules left as the belt to its braces — is the version that stops. The exit line is the cheapest piece and the one with no rule at all.
+- **The exit line is why two error messages in the `--env`/`--env-file` path are worded as they are:** the `--env-file` parser never quotes the file's content, and `--env`'s parse error names which occurrence was malformed rather than echoing the token. Both were written against this finding rather than around it; neither is a substitute for the missing redactor, because any other error that happens to quote user input still lands there unredacted.
 - **Not quietly worked around.** The `--env` fix is deliberately narrow (one flag, both report types) and makes no claim about the other sections.
-- **Pointer:** `internal/cli/bugreport/writer.go` — `writeConfigSection`/`sanitizeYAMLConfig`, `WriteLiveLog`/`SanitizeJSONLBytes`/`sanitizeText`, `WriteCommandInvocation`/`redactEnvArgs`. The user-facing promise this is measured against: [GUIDE.md § Passing secrets to the sandbox](../../GUIDE.md#passing-secrets-to-the-sandbox), which tells users a report redacts `--env` and still to read one before attaching it.
+- **Pointer:** `internal/cli/bugreport/writer.go` — `writeConfigSection`/`sanitizeYAMLConfig`, `WriteLiveLog`/`SanitizeJSONLBytes`/`sanitizeText`, `WriteCommandInvocation`/`redactEnvArgs`, `WriteExit` (the one with no redactor). Documented behaviour: [bugreport.md § 2. Command Invocation](bugreport.md). The user-facing promise this is measured against: [GUIDE.md § Passing secrets to the sandbox](../../GUIDE.md#passing-secrets-to-the-sandbox), which tells users a report redacts `--env` and still to read one before attaching it.
+
+### DF238 — `--env`'s own edges are unvalidated, and the key becomes a host filename
+
+- **Discovered:** 2026-10-03, while adding `--env-file` alongside it (the same resolver parses both) · **Workstream:** secret passing
+- **Severity:** LOW — a single-principal CLI, so the traversal writes only where the invoking user could already write
+- **Disposition:** UNRESOLVED — PARKED. Out of scope by instruction: the `--env-file` work's agreed definition of done requires `--env` to keep working **unchanged**, and each item below is a newly-rejected input, which is a user-visible break (rule 1) and the owner's call rather than a worker's.
+- **Rides:** **breaking** — every fix below refuses input that is accepted today.
+- **Description:** `parseEnvSlice` (`internal/cli/lifecycle/new.go`) splits on the first `=` and stores the result. It validates nothing, which leaves three edges:
+
+  | Input | Today | Why it matters |
+  | --- | --- | --- |
+  | `--env '../../tmp/x=1'` | accepted, key `../../tmp/x` | On every backend without agent-free launch, each key becomes a staged filename — `filepath.Join(tmpDir, k)` in `envsetup.StageSecretEnv` — so `Join` cleans the traversal and a `0600` file is written outside the staging dir |
+  | `--env A=1 --env A=2` | `A=2`, silently | `--env-file` refuses the same thing; the two halves of one pair disagree about whether a doubled key is an error |
+  | `--env 'A B=1'` | accepted | `A B` cannot be read by any shell in the sandbox, so the variable is delivered and unusable |
+
+  `--env-file` validates the key against `[A-Za-z_][A-Za-z0-9_]*` and refuses a doubled key; `--env` does neither, so which flag you used decides whether a malformed name is caught.
+- **Verified, not inferred.** All three rows measured: `resolveEnv([]string{"../../tmp/pwn=x"}, "", nil)` → `map["../../tmp/pwn":"x"]`, no error; `{"A=1","A=2"}` → `{"A":"2"}`, no error; `{"A B=1"}` → `{"A B":"1"}`, no error. And the escape is arithmetic, not a guess: `filepath.Join("/var/folders/yoloai-secrets-123", "../../tmp/pwn")` is `/var/tmp/pwn`.
+- **Already fixed in place, because it was not a rejection:** `--env`'s parse error used to quote the whole token, so `--env 'API_TOKEN s3cret'` put the secret in an error — and an error reaches a bug report's exit line, which has no redactor ([DF237](findings-unresolved.md)). It now names the occurrence number instead. That changes no input's acceptance, which is why it did not need the owner.
+- **What would close it:** validate `--env` keys with the same pattern and refuse a doubled key, in a release that is already breaking, with a `docs/BREAKING-CHANGES.md` entry. The staging-filename coupling is worth its own look even then: a key that is a path at all is a defect the staging layer could refuse on its own, independently of what the CLI accepts.
+- **Pointer:** `internal/cli/lifecycle/new.go` (`parseEnvSlice`); `internal/cli/lifecycle/envfile.go` (`parseEnvFileData`, the validating sibling); `internal/envsetup/envsetup.go` (`StageSecretEnv`, where a key becomes a filename); `internal/orchestrator/launch/launch.go` (`usesAgentFreeLaunch`, which decides whether the staging path runs at all).
 
 ## Policy origin
 
