@@ -92,6 +92,11 @@ func resolveEnvFromFlags(cmd *cobra.Command) (map[string]string, error) {
 // SECRETS unset. Treating that as "no file" starts a sandbox carrying none of the
 // secrets it was told to carry, says nothing, and exits 0. --prompt-file does
 // read "" as absent; for secret delivery, silence is the wrong direction.
+//
+// Reading Changed is the only such read in the CLI — every other string flag
+// treats "" as absent via cliutil.FlagStr. If a second secret-bearing flag needs
+// the same distinction, that asymmetry is worth a shared helper rather than a
+// second copy of this.
 func envFilePath(cmd *cobra.Command) (string, error) {
 	f := cmd.Flags().Lookup("env-file")
 	if f == nil || !f.Changed {
@@ -104,10 +109,21 @@ func envFilePath(cmd *cobra.Command) (string, error) {
 	case stdinPath:
 		return path, nil
 	}
+	// Only expand where there is something to expand. ExpandPath is a no-op for a
+	// path with neither a leading ~ nor a ${, and reaching cliutil.Layout() for
+	// one would make an ordinary path depend on process-wide state.
+	if !strings.HasPrefix(path, "~") && !strings.Contains(path, "${") {
+		return path, nil
+	}
 	layout := cliutil.Layout()
 	expanded, err := config.ExpandPath(path, layout.HomeDir, layout.Env().EnvForConfigInterpolation())
 	if err != nil {
 		return "", yoerrors.NewUsageError("invalid --env-file path: %s", err)
+	}
+	// A ${VAR} on the interpolation allowlist can be set and empty, and an empty
+	// path here would land back on the silent "no file" this function refuses.
+	if expanded == "" {
+		return "", yoerrors.NewUsageError("--env-file %s expanded to an empty path", path)
 	}
 	return expanded, nil
 }
@@ -210,9 +226,10 @@ func readEnvFileData(path string, stdin io.Reader) ([]byte, error) {
 //     the sandbox gets.
 //   - A trailing CR is dropped, so a CRLF file parses as the same thing a LF
 //     file does rather than appending an invisible byte to every value. A CR
-//     anywhere else is an error: a CR-only (classic Mac) file is one "line" to
-//     this parser, and guessing would turn the whole file into one variable whose
-//     value is the rest of the secrets.
+//     anywhere else is an error, checked before blank and comment lines are
+//     skipped: a CR-only (classic Mac) file is one "line" to this parser, so
+//     guessing would turn the whole file into one variable whose value is the rest
+//     of the secrets — or, if that line starts with '#', into nothing at all.
 //   - A leading UTF-8 BOM is dropped. Editors write it invisibly, and it would
 //     otherwise make the first line's key unmatchable for a reason the user
 //     cannot see.
@@ -235,17 +252,26 @@ func parseEnvFileData(data []byte) (map[string]string, error) {
 	text := strings.TrimPrefix(string(data), "\ufeff")
 	for i, raw := range strings.Split(text, "\n") {
 		lineNo := i + 1
-		// TrimLeft only: indentation is not content, but trailing whitespace is
-		// part of the value.
-		line := strings.TrimLeft(strings.TrimSuffix(raw, "\r"), " \t")
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
+		line := strings.TrimSuffix(raw, "\r")
+
+		// Before anything is allowed to ignore the line. A CR-only file is a
+		// single line to a parser that splits on LF, and if it begins with '#' —
+		// the ordinary first line of a secrets file — skipping comments first
+		// would discard the entire file and start the sandbox with an empty
+		// environment, silently and with exit 0. That is the outcome this parser
+		// exists to prevent, so the check cannot sit behind the skip.
 		if strings.ContainsRune(line, '\r') {
 			return nil, yoerrors.NewUsageError("--env-file line %d: contains a carriage return — CRLF line endings are fine, a CR-only file is not", lineNo)
 		}
 		if strings.ContainsRune(line, 0) {
 			return nil, yoerrors.NewUsageError("--env-file line %d: contains a NUL byte, which no environment variable can carry", lineNo)
+		}
+
+		// TrimLeft only: indentation is not content, but trailing whitespace is
+		// part of the value.
+		line = strings.TrimLeft(line, " \t")
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
 		}
 
 		key, val, ok := strings.Cut(line, "=")
