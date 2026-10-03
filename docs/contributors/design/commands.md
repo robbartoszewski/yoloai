@@ -206,7 +206,8 @@ Options:
 - `--isolation <mode>`: Isolation mode: `container` (default), `container-enhanced` (gVisor), `container-privileged` (`--privileged`, for Docker-in-Docker), `vm` (Kata+QEMU), `vm-enhanced` (Kata+Firecracker).
 - `--os <os>`: Target OS: `linux` (default) or `mac`.
 - `--cpus <n>` / `--memory <size>`: Per-sandbox resource limits (e.g. `--cpus 2.5`, `--memory 8g`).
-- `--env <KEY=VAL>`: Set an environment variable inside the sandbox (repeatable).
+- `--env <KEY=VAL>`: Set an environment variable inside the sandbox (repeatable). Not for secrets: the value stays on yoloai's own argv for the life of the sandbox, where any other local account can read it.
+- `--env-file <path>`: Read environment variables from a file of `KEY=VAL` lines, or from stdin with `-`. The secret-passing mechanism — only the path reaches argv. Available on every verb that takes `--env` (`new`, `run`, `start`, `restart`, `reset`). A variable set in both `--env` and `--env-file` is an error, not a precedence rule. Parsing: blank lines and `#`-first lines ignored, `#` elsewhere is value, value literal to end of line (no unquoting, no expansion), key must be `[A-Za-z_][A-Za-z0-9_]*`, same key twice in a file is an error. Errors cite the line number and never the line — the text would reach stderr, `logs/cli.jsonl` and a bug report. File permissions are the caller's.
 - `--archetype <name>`: Environment archetype (run `yoloai new --help` for the current set).
 - `--runtime <name>`: Apple simulator runtime for `mac` targets (`ios`, `tvos`, `watchos`, `visionos`; repeatable, e.g. `--runtime tvos:26.1`).
 - `--vscode-tunnel`: Launch a VS Code Remote Tunnel alongside the agent (connect from VS Code on any machine).
@@ -697,6 +698,8 @@ This eliminates the need to diagnose *why* a sandbox isn't running before choosi
 
 **`-a`/`--attach` flag:** After the sandbox is running, automatically attach to the tmux session (equivalent to running `yoloai attach <name>` immediately after). Saves a round-trip for the common workflow of starting a sandbox and then interacting with it.
 
+**`--env` / `--env-file`:** Per-sandbox env vars for this launch only — not persisted, so they are re-supplied on each `start`. Same shape and same rules as on `yoloai new`, including `--env-file -` for stdin and the refusal of a key given in both.
+
 **`--resume` flag:** When used, the agent is relaunched in **interactive mode** (regardless of the original prompt delivery mode) with the original prompt from `prompt.txt` prefixed with a preamble: "You were previously working on the following task and were interrupted. The work directory contains your progress so far. Continue where you left off:" followed by the original prompt text. Interactive mode is always used for resume because the user may want to follow up or redirect. Error if the sandbox has no `prompt.txt` (was created without `--prompt`). Without `--resume`, `yoloai start` relaunches the agent in interactive mode with no prompt (user attaches and gives instructions manually).
 
 ### `yoloai restart`
@@ -706,6 +709,8 @@ This eliminates the need to diagnose *why* a sandbox isn't running before choosi
 **`-a`/`--attach` flag:** After the sandbox is restarted, automatically attach to the tmux session.
 
 **`--resume` flag:** Passed through to `start --resume` — the agent is relaunched with the original prompt prefixed with a continuation preamble.
+
+**`--env` / `--env-file`:** As on `start` — per-restart, not persisted, with `--env-file` the way to pass a secret.
 
 ### `yoloai reset`
 
@@ -761,7 +766,8 @@ Options:
 - `--keep-files`: Preserve the files directory (not cleared).
 - `--no-prompt`: Skip re-sending the prompt after reset.
 - `-a`/`--attach`: Auto-attach after restart. Implies `--restart`.
-- `--env <KEY=VAL>`: Per-sandbox env var applied on `--restart` (repeatable, not persisted).
+- `--env <KEY=VAL>`: Per-sandbox env var applied on `--restart` (repeatable, not persisted). Not for secrets — see `--env-file` under `yoloai new`.
+- `--env-file <path>`: The same values from a file of `KEY=VAL` lines, or from stdin with `-`, applied on `--restart` (not persisted).
 - `--debug`: Enable debug logging in sandbox entrypoint.
 
 Implied behaviors:

@@ -416,6 +416,10 @@ yoloai new task ./project --port 3000:3000
 # Pass environment variables to the sandbox
 yoloai new task ./project --env MY_VAR=value --env OTHER=val2
 
+# Pass a secret: --env-file keeps the value off the command line
+yoloai new task ./project --env-file ./secrets.env
+printf 'API_TOKEN=%s\n' "$token" | yoloai new task ./project --env-file -
+
 # Debug entrypoint issues
 yoloai new task ./project --debug
 ```
@@ -834,7 +838,37 @@ mv ~/.yoloai/library/trash/<name> ~/.yoloai/library/sandboxes/<name>
 - **Dangerous directory detection.** Refuses to mount `$HOME`, `/`, or system directories. Append `:force` to override (e.g., `$HOME:force`).
 - **Dirty repo warning.** Prompts if your workdir has uncommitted git changes, so you don't lose work.
 - **Credential brokering (default).** For supported setups the agent's LLM API key is held **host-side** and never enters the sandbox — see [Credential Brokering](#credential-brokering) below. Credentials that aren't brokered (other agents, subscription tokens, unsupported backends) are delivered as files instead (next bullet).
+- **Secrets of your own go in a file, not on the command line.** `--env KEY=VAL` puts the value on yoloai's own command line, where it stays for as long as the sandbox runs — and on macOS and most Linux configurations any other local account can read it with `ps -ww`. Use `--env-file` for anything secret; see [Passing secrets to the sandbox](#passing-secrets-to-the-sandbox).
 - **Credential injection via files.** Non-brokered API keys are mounted as read-only files at `/run/secrets/`, not passed as environment variables. Temp files on the host are cleaned up after container start. Some agents support additional credential sources — for example, on macOS, yoloai checks the macOS Keychain for Claude Code OAuth credentials (service `Claude Code-credentials`). If you're logged in via `claude` CLI, yoloai will automatically detect your credentials even without `~/.claude/.credentials.json` on disk.
+
+### Passing secrets to the sandbox
+
+The agent's own LLM credential needs none of this — yoloai takes it from its own environment and brokers or mounts it (above). This is for everything else you want the sandbox to have: a registry token, a database password, an API key for the service the agent is working on.
+
+**Use `--env-file`, not `--env`.** A value passed as `--env KEY=VAL` sits on yoloai's command line for the entire life of the sandbox. Process arguments are not private to the user who started the process: on macOS always, and on Linux unless `/proc` is mounted with `hidepid`, so any other local account can read the value with `ps -ww` — and `start`, `restart` and `reset` take `--env` too, so the value is re-exposed on every start. `--env-file` reads the values from a file instead, and the file's path is all that reaches the command line:
+
+```bash
+yoloai new task ./project --env-file ./secrets.env
+yoloai start task --env-file ./secrets.env        # same for restart, and reset --restart
+
+# Or pipe them in, so they never touch the disk either
+printf 'API_TOKEN=%s\n' "$token" | yoloai new task ./project --env-file -
+```
+
+`--env-file` is available on `new`, `run`, `start`, `restart` and `reset`, wherever `--env` is. `--env` keeps working unchanged for values that are not secret.
+
+The file is a list of `KEY=VAL` lines:
+
+- Blank lines are ignored, and so is a line whose first non-whitespace character is `#`.
+- **A `#` anywhere else is part of the value.** Passwords contain them.
+- **The value is literal to the end of the line.** No quote stripping, no `$VAR` or `${VAR}` expansion, trailing spaces kept: `A="x"` sets `A` to `"x"`, quotes included. `.env` files written for a dotenv library that unquotes values will not mean the same thing here.
+- The key is a plain variable name (`[A-Za-z_][A-Za-z0-9_]*`). `export FOO=1` is rejected, as is `FOO = 1`.
+- Setting the same variable twice — twice in the file, or once in the file and once in `--env` — is an error. There is no precedence rule to remember, and nothing is silently discarded.
+- Errors give the line number and never quote the line, so a malformed secret does not end up in your terminal, the sandbox's `logs/cli.jsonl`, or a bug report.
+
+**The file's permissions are yours to set.** yoloai reads whatever path you give it and does not insist on `0600`, because the alternative — refusing the file — only pushes the value back onto the command line, which is worse. If the secret is long-lived, `chmod 600` it.
+
+**What yoloai writes down.** The sandbox's environment is never persisted: `--env` and `--env-file` values are re-supplied on each `start`/`restart`/`reset` by design. A bug report (`--bugreport`, `yoloai sandbox bugreport`) records the command line you ran, with `--env` values redacted to `KEY=[REDACTED]` in both the safe and unsafe forms — but it is still worth reading a report before attaching it to an issue.
 
 ### Credential Brokering
 
