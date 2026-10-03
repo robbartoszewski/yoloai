@@ -1347,6 +1347,26 @@ earlier signal and records nothing else.
 - **What would actually close it:** typecheck the research corpus for a fixed platform rather than the host's (mypy's `--platform`), so both hosts agree — or accept that the corpus is Linux-only and exclude it from the macOS run. Either makes the gate say the same thing on both machines, which is the property it currently lacks.
 - **Pointer:** `docs/contributors/design/research/mac-channel/c1_guest_initiate.py`; `docs/contributors/design/research/mac-channel/c1_guest_vsock.py` (the convention); `Makefile` (`python-typecheck`).
 
+### DF237 — a bug report's three redactors each cover one surface, so a secret is caught only if it arrived on the right one
+
+- **Discovered:** 2026-10-03, while redacting `--env` values out of the recorded command line (`--env-file`, the secret-passing work) · **Workstream:** secret passing
+- **Severity:** LOW — it needs a secret in config under a name that reads as ordinary; the common names are covered
+- **Disposition:** UNRESOLVED — PARKED. The instance that prompted it (argv) is fixed; the class is not.
+- **Rides:** **any**.
+- **Description:** A bug report redacts in three independent places, each knowing only its own surface:
+
+  | Surface | Redactor | Rule |
+  | --- | --- | --- |
+  | The command line (section 2) | `redactPromptArgs`, `redactEnvArgs` | named flags only |
+  | Config YAML (section 5) | `sanitizeYAMLConfig` | **key-name keywords only** |
+  | The live log (section 13) | `sanitizeText` | **value patterns only** |
+
+  The two value-shaped rules never meet the two name-shaped ones. The pattern set in `sanitizeText` — PEM blocks, known key prefixes, connection strings, JWTs, long hex/base64 — is not applied to the config bytes, and the keyword list is not applied to the log. So whether a secret is published depends on which section it arrived in, not on what it is.
+- **Verified, not inferred.** Rendering a safe report over `env:\n  DB_DSN: postgres://user:hunter2@db.example/app\n  SHORT_TOKEN: abc123def\n` publishes the DSN verbatim and redacts `SHORT_TOKEN` — the first because no keyword matches `DB_DSN`, the second only because its *name* contains "token". The same DSN in the live log is caught by `sanitizeText`'s connection-string pattern. `env:` is the sharp edge because its keys are arbitrary user-chosen names, so the keyword list is being asked to guess them.
+- **The shape, which is the point of filing it:** three redactors for one job, each complete on its own axis and blind on the other. `--env` on argv was the third instance of the same class in two days of looking (the first two: `--prompt`, which is redacted, and the config section, which is this). A fix that keeps the surfaces separate will keep generating these; running every rendered section through `sanitizeText` in safe mode — i.e. one value-shaped pass over the whole document, with the name-shaped rules left as the belt to its braces — is the version that stops.
+- **Not quietly worked around.** The `--env` fix is deliberately narrow (one flag, both report types) and makes no claim about the other sections.
+- **Pointer:** `internal/cli/bugreport/writer.go` — `writeConfigSection`/`sanitizeYAMLConfig`, `WriteLiveLog`/`SanitizeJSONLBytes`/`sanitizeText`, `WriteCommandInvocation`/`redactEnvArgs`. The user-facing promise this is measured against: [GUIDE.md § Passing secrets to the sandbox](../../GUIDE.md#passing-secrets-to-the-sandbox), which tells users a report redacts `--env` and still to read one before attaching it.
+
 ## Policy origin
 
 Established in [architecture-remediation.md](../archive/plans/architecture-remediation.md) and inherited by [layering-refactor.md](../archive/plans/layering-refactor.md).
