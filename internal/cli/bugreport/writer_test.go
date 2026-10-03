@@ -104,6 +104,69 @@ func TestRedactPromptArgs_OtherFlagsUnchanged(t *testing.T) {
 	assert.Equal(t, "claude", result[1])
 }
 
+// --- redactEnvArgs ---
+
+func TestRedactEnvArgs_SpaceForm(t *testing.T) {
+	result := redactEnvArgs([]string{"yoloai", "--env", "API_TOKEN=s3cret"})
+	assert.Equal(t, []string{"yoloai", "--env", "API_TOKEN=[REDACTED]"}, result)
+}
+
+func TestRedactEnvArgs_EqualsForm(t *testing.T) {
+	result := redactEnvArgs([]string{"yoloai", "--env=API_TOKEN=s3cret"})
+	assert.Equal(t, []string{"yoloai", "--env=API_TOKEN=[REDACTED]"}, result)
+}
+
+func TestRedactEnvArgs_ValueWithoutAnEqualsIsRedactedWhole(t *testing.T) {
+	// Malformed as a --env value, so it is not a bare variable name to be
+	// published — it could be anything, including the secret on its own.
+	result := redactEnvArgs([]string{"--env", "s3cret"})
+	assert.Equal(t, []string{"--env", "[REDACTED]"}, result)
+}
+
+// TestRedactEnvArgs_LeavesEnvFileAlone: the path is diagnostic and holds no
+// secret itself, and this is also the prefix most likely to be over-matched.
+func TestRedactEnvArgs_LeavesEnvFileAlone(t *testing.T) {
+	args := []string{"--env-file", "/tmp/secrets.env", "--env-file=/tmp/other.env"}
+	assert.Equal(t, args, redactEnvArgs(args))
+}
+
+func TestRedactEnvArgs_OtherFlagsUnchanged(t *testing.T) {
+	args := []string{"--agent", "claude", "--prompt", "fix the build"}
+	assert.Equal(t, args, redactEnvArgs(args))
+}
+
+// TestWriteCommandInvocation_RedactsEnvInBothReportTypes pins the one place this
+// redaction deliberately differs from --prompt's: an unsafe report is
+// unsanitized because its content is the diagnostic material, and an env value
+// never is. A report is a file people attach to a public issue.
+//
+// Every verb that takes --env is covered, because every one of them puts the
+// value on the command line this section copies.
+func TestWriteCommandInvocation_RedactsEnvInBothReportTypes(t *testing.T) {
+	verbArgs := map[string][]string{
+		"new":     {"yoloai", "new", "box", ".", "--env", "API_TOKEN=s3cret", "--prompt", "fix it"},
+		"run":     {"yoloai", "run", "box", ".", "--env=API_TOKEN=s3cret", "-p", "fix it"},
+		"start":   {"yoloai", "start", "box", "--env", "API_TOKEN=s3cret"},
+		"restart": {"yoloai", "restart", "box", "--env=API_TOKEN=s3cret"},
+		"reset":   {"yoloai", "reset", "box", "--restart", "--env", "API_TOKEN=s3cret"},
+	}
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
+
+	for verb, args := range verbArgs {
+		for _, reportType := range []string{"safe", "unsafe"} {
+			t.Run(verb+"/"+reportType, func(t *testing.T) {
+				os.Args = args
+				var buf bytes.Buffer
+				WriteCommandInvocation(&buf, reportType)
+				assert.NotContains(t, buf.String(), "s3cret")
+				assert.Contains(t, buf.String(), "API_TOKEN=[REDACTED]")
+				assert.Contains(t, buf.String(), verb, "the verb is diagnostic and stays")
+			})
+		}
+	}
+}
+
 // --- sanitizeYAMLConfig ---
 
 func TestSanitizeYAMLConfig_RedactsAPIKey(t *testing.T) {

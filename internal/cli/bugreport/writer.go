@@ -54,9 +54,9 @@ func WriteHeader(w io.Writer, version, commit, date, reportType string) {
 }
 
 // WriteCommandInvocation writes section 2: the full command invocation.
-// In safe mode, --prompt / -p values are redacted.
+// --env values are redacted in every report; --prompt / -p only in safe ones.
 func WriteCommandInvocation(w io.Writer, reportType string) {
-	args := os.Args
+	args := redactEnvArgs(os.Args)
 	if reportType == "safe" {
 		args = redactPromptArgs(args)
 	}
@@ -77,6 +77,44 @@ func redactPromptArgs(args []string) []string {
 		}
 	}
 	return result
+}
+
+// redactEnvArgs redacts the value half of every --env KEY=VAL argument, keeping
+// the variable's name.
+//
+// This one runs on unsafe reports too, which otherwise stay deliberately
+// unsanitized. The reason the rest of an unsafe report is unredacted is that its
+// content is the diagnostic material — logs, agent output, config. An env
+// *value* never is: the name is the whole of what a reader of this line needs,
+// and the value is the secret a user had no way to keep off the command line
+// before --env-file existed. A report is a file people attach to a public
+// issue, so "unsafe" cannot mean "copies this one through".
+//
+// --env-file is not matched here, and must not be: its value is a path, which is
+// diagnostic, and the secrets are in the file, which this report never reads.
+func redactEnvArgs(args []string) []string {
+	result := make([]string, len(args))
+	copy(result, args)
+	for i, arg := range result {
+		if arg == "--env" && i+1 < len(result) {
+			result[i+1] = redactEnvAssignment(result[i+1])
+		}
+		if after, ok := strings.CutPrefix(arg, "--env="); ok {
+			result[i] = "--env=" + redactEnvAssignment(after)
+		}
+	}
+	return result
+}
+
+// redactEnvAssignment turns KEY=VAL into KEY=[REDACTED]. A token with no '=' is
+// malformed as a --env value, so it is replaced whole rather than published on
+// the assumption it must be a bare name.
+func redactEnvAssignment(assignment string) string {
+	key, _, ok := strings.Cut(assignment, "=")
+	if !ok {
+		return "[REDACTED]"
+	}
+	return key + "=[REDACTED]"
 }
 
 // WriteDiagnostics renders sections 3–5 (System, Backends, VM slots, Config)
