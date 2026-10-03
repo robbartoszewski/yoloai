@@ -37,9 +37,17 @@ const stdinPath = "-"
 
 var envVarNameRe = regexp.MustCompile("^" + envVarNamePattern + "$")
 
+// isUnicodeLineSeparator reports whether r is one of the line terminators this
+// parser does not split on: NEL (U+0085), LS (U+2028), PS (U+2029). Written as
+// codepoints rather than a string literal, which would be three invisible bytes
+// in the source for the next reader to take on trust.
+func isUnicodeLineSeparator(r rune) bool {
+	return r == 0x0085 || r == 0x2028 || r == 0x2029
+}
+
 // createEnvUsage is the --env/--env-file help for the create verbs (new, run).
 var createEnvUsage = envFlagUsage{
-	env:     "Environment variable (KEY=VAL, repeatable). Not for secrets — the value is on the command line of every invocation you pass it to, where any local user can read it with 'ps'. Use --env-file",
+	env:     "Environment variable (KEY=VAL, repeatable). Not for secrets — the value is on the command line of every invocation you pass it to, which another local user can usually read with 'ps' (always on macOS; on Linux without hidepid). Use --env-file",
 	envFile: "Read environment variables from a file of KEY=VAL lines, or from stdin with '-'. The way to pass a secret: the value never reaches the command line",
 }
 
@@ -48,7 +56,7 @@ var createEnvUsage = envFlagUsage{
 // "restart", so each verb's help names the command the user has to repeat.
 func perStartEnvUsage(verb string) envFlagUsage {
 	return envFlagUsage{
-		env:     "Per-sandbox env var KEY=VAL (not persisted; re-supply on each " + verb + "). Not for secrets — the value is visible to any local user via 'ps' while this command runs. Use --env-file",
+		env:     "Per-sandbox env var KEY=VAL (not persisted; re-supply on each " + verb + "). Not for secrets — the value is usually visible to other local users via 'ps' while this command runs. Use --env-file",
 		envFile: "Read per-sandbox env vars from a file of KEY=VAL lines, or from stdin with '-' (not persisted; re-supply on each " + verb + "). The way to pass a secret",
 	}
 }
@@ -56,7 +64,7 @@ func perStartEnvUsage(verb string) envFlagUsage {
 // resetEnvUsage is the --env/--env-file help for reset, where the values only
 // take effect on the --restart path.
 var resetEnvUsage = envFlagUsage{
-	env:     "Per-sandbox env var KEY=VAL applied on --restart (not persisted). Not for secrets — the value is visible to any local user via 'ps' while this command runs. Use --env-file",
+	env:     "Per-sandbox env var KEY=VAL applied on --restart (not persisted). Not for secrets — the value is usually visible to other local users via 'ps' while this command runs. Use --env-file",
 	envFile: "Read per-sandbox env vars applied on --restart from a file of KEY=VAL lines, or from stdin with '-' (not persisted). The way to pass a secret",
 }
 
@@ -118,6 +126,14 @@ func envFilePath(cmd *cobra.Command) (string, error) {
 	layout := cliutil.Layout()
 	expanded, err := config.ExpandPath(path, layout.HomeDir, layout.Env().EnvForConfigInterpolation())
 	if err != nil {
+		// %s, not %w: standards/go.md asks upstream errors to be wrapped, and no
+		// NewUsageError call site in this repo does it (0 of them), so wrapping
+		// only here would make this the single place errors.Is reaches through a
+		// UsageError. The declared rule and the practised baseline disagree;
+		// resolving that is a decision about yoerrors, not about this flag, so the
+		// divergence is stated rather than settled (development-principles.md §1).
+		// Nothing is lost that a reader needs: ExpandPath's message names the
+		// variable, and the only failure here is an unresolvable ${VAR}.
 		return "", yoerrors.NewUsageError("invalid --env-file path: %s", err)
 	}
 	// A ${VAR} on the interpolation allowlist can be set and empty, and an empty
@@ -262,6 +278,16 @@ func parseEnvFileData(data []byte) (map[string]string, error) {
 		// exists to prevent, so the check cannot sit behind the skip.
 		if strings.ContainsRune(line, '\r') {
 			return nil, yoerrors.NewUsageError("--env-file line %d: contains a carriage return — CRLF line endings are fine, a CR-only file is not", lineNo)
+		}
+		// The same rule for the line separators that are not LF: NEL (U+0085),
+		// LS (U+2028) and PS (U+2029) end a line for some editors and for every
+		// Unicode-aware reader, and for none of them does this parser, so a file
+		// written with one is a single line here. `A=1<LS>B=2` became one
+		// variable holding the rest of the secrets, and a '#' first line made the
+		// whole file vanish into the comment skip — the CR defect exactly, one
+		// encoding over. Named by codepoint because there is nothing to show.
+		if strings.IndexFunc(line, isUnicodeLineSeparator) >= 0 {
+			return nil, yoerrors.NewUsageError("--env-file line %d: contains a Unicode line separator (U+0085, U+2028 or U+2029) that this parser does not split on — use LF or CRLF line endings", lineNo)
 		}
 		if strings.ContainsRune(line, 0) {
 			return nil, yoerrors.NewUsageError("--env-file line %d: contains a NUL byte, which no environment variable can carry", lineNo)

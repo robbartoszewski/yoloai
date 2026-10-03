@@ -130,6 +130,25 @@ func TestRedactEnvArgs_LeavesEnvFileAlone(t *testing.T) {
 	assert.Equal(t, args, redactEnvArgs(args))
 }
 
+// TestRedactEnvArgs_ARepeatedFlagDoesNotHideTheValue: the redactor rewrites a
+// copy of argv, and reading its decisions from that copy let one redaction hide
+// the next flag. `--env --env KEY=VAL` is a duplicated-flag typo, which fails —
+// and a failure is when a user reaches for --bugreport. Reverting either loop to
+// range over `result` turns this red.
+func TestRedactEnvArgs_ARepeatedFlagDoesNotHideTheValue(t *testing.T) {
+	result := redactEnvArgs([]string{"yoloai", "new", "--env", "--env", "API_TOKEN=s3cret"})
+	assert.NotContains(t, strings.Join(result, " "), "s3cret")
+	assert.Equal(t, []string{"yoloai", "new", "--env", "[REDACTED]", "API_TOKEN=[REDACTED]"}, result)
+}
+
+// The same defect on the sibling redactor, found by grepping for the shape
+// (AGENTS.md rule 7) rather than by a second report.
+func TestRedactPromptArgs_ARepeatedFlagDoesNotHideTheValue(t *testing.T) {
+	result := redactPromptArgs([]string{"yoloai", "new", "--prompt", "--prompt", "secret prompt"})
+	assert.NotContains(t, strings.Join(result, " "), "secret prompt")
+	assert.Equal(t, []string{"yoloai", "new", "--prompt", "[REDACTED]", "[REDACTED]"}, result)
+}
+
 func TestRedactEnvArgs_OtherFlagsUnchanged(t *testing.T) {
 	args := []string{"--agent", "claude", "--prompt", "fix the build"}
 	assert.Equal(t, args, redactEnvArgs(args))

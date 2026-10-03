@@ -11,9 +11,12 @@ COPY PROTECTION
 
 CREDENTIAL INJECTION
 
-  API keys are mounted as read-only files at /run/secrets/ inside the
-  container, not passed as environment variables. Temp files on the
-  host are cleaned up after container start.
+  By default the agent's API key never enters the sandbox at all: it
+  is held host-side and brokered (see 'yoloai help' and the guide).
+  A credential that cannot be brokered is mounted as a read-only
+  file at /run/secrets/ rather than put in the config, except where
+  yoloai hands the launched agent its environment directly. Temp
+  files on the host are cleaned up after container start.
 
   On macOS, yoloai checks the Keychain for Claude Code OAuth
   credentials automatically.
@@ -39,9 +42,14 @@ PASSING YOUR OWN SECRETS
   Setting the same variable twice — in the file, or in both the
   file and --env — is an error rather than a silent last-wins.
   (Repeating --env itself still takes the last one, as it always
-  has, and so does repeating --env-file.) A CRLF file is fine; a
-  CR-only one is refused rather than guessed at. File permissions
-  are yours to set; yoloai reads what you give it.
+  has, and so does repeating --env-file.) Lines are split on LF
+  only: a CRLF file is fine, and any other line ending — a lone CR,
+  or U+0085/U+2028/U+2029 — is refused rather than guessed at, since
+  the guess would be one variable holding the rest of the file. An
+  empty file sets nothing and is allowed; an empty --env-file value
+  is not. File permissions are yours to set; yoloai reads what you
+  give it, and on most backends delivers the values as owner-only
+  files under /run/secrets.
 
   --env still works, unchanged, for values that are not secret.
 

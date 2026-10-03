@@ -65,11 +65,16 @@ func WriteCommandInvocation(w io.Writer, reportType string) {
 }
 
 // redactPromptArgs redacts the values of --prompt / -p flags.
+//
+// Decisions are read from args and only written to result: iterating over the
+// slice being rewritten lets one redaction hide the next flag, so
+// `--prompt --prompt <secret>` published the secret (see redactEnvArgs, which
+// had the same defect on a surface where the value is always a secret).
 func redactPromptArgs(args []string) []string {
 	result := make([]string, len(args))
 	copy(result, args)
-	for i, arg := range result {
-		if (arg == "--prompt" || arg == "-p") && i+1 < len(result) {
+	for i, arg := range args {
+		if (arg == "--prompt" || arg == "-p") && i+1 < len(args) {
 			result[i+1] = "[REDACTED]"
 		}
 		if strings.HasPrefix(arg, "--prompt=") {
@@ -96,12 +101,20 @@ func redactPromptArgs(args []string) []string {
 // This covers one flag on one surface. The report's redactors are per-surface and
 // do not share a rule — the config section matches key names only, and the exit
 // line has no redactor at all — which is parked as DF237, not fixed here.
+//
+// Every decision is read from args and only ever written to result. Walking the
+// slice being rewritten is what made `--env --env API_TOKEN=...` — an ordinary
+// duplicated-flag typo, and a failure, which is when a user reaches for
+// --bugreport — publish the secret verbatim: the first redaction overwrote the
+// second "--env" with "[REDACTED]", so the token after it was never examined. A
+// sanitiser that rewrites its input in place must not let one rewrite hide the
+// next match; redactPromptArgs had the same defect and is fixed with it.
 func redactEnvArgs(args []string) []string {
 	result := make([]string, len(args))
 	copy(result, args)
-	for i, arg := range result {
-		if arg == "--env" && i+1 < len(result) {
-			result[i+1] = redactEnvAssignment(result[i+1])
+	for i, arg := range args {
+		if arg == "--env" && i+1 < len(args) {
+			result[i+1] = redactEnvAssignment(args[i+1])
 		}
 		if after, ok := strings.CutPrefix(arg, "--env="); ok {
 			result[i] = "--env=" + redactEnvAssignment(after)

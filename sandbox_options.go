@@ -33,7 +33,9 @@ import (
 //
 // Confirmation is never interactive here: Create does not prompt. A dirty
 // workdir yields *DirtyWorkdirError unless acked via AllowDirtyWorkdir (or the
-// per-directory Workdir.AllowDirty); the CLI catches that, prompts, and retries.
+// per-directory Workdir.AllowDirty). Nor does the CLI prompt: it prints the
+// warning and re-issues the create only when --allow-dirty was given, which is
+// the one way past the refusal.
 type SandboxCreateOptions struct {
 	// Name is the sandbox identifier. Required (no auto-generation).
 	Name string

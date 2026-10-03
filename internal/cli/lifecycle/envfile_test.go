@@ -27,6 +27,15 @@ import (
 // asserted absent from error messages and log output.
 const envFileSecret = "s3cret#value "
 
+// The line terminators this parser refuses because it does not split on them.
+// Named rather than pasted: an invisible byte in a fixture is a fixture the next
+// reader has to take on trust, and these three are indistinguishable by eye.
+var (
+	lsSep  = string(rune(0x2028)) // LINE SEPARATOR
+	psSep  = string(rune(0x2029)) // PARAGRAPH SEPARATOR
+	nelSep = string(rune(0x0085)) // NEXT LINE
+)
+
 // writeEnvFile writes body to a temp file and returns its path.
 func writeEnvFile(t *testing.T, body string) string {
 	t.Helper()
@@ -97,6 +106,15 @@ func TestParseEnvFileData_Errors(t *testing.T) {
 		// the sandbox with an empty environment, silently, exit 0.
 		{"CR-only file starting with a comment", "# secrets\rA=" + envFileSecret + "\r", "line 1: contains a carriage return"},
 		{"CR-only file starting with an indented comment", "  # secrets\rA=" + envFileSecret + "\r", "line 1: contains a carriage return"},
+		// The CR rule's own argument applies to every line terminator this parser
+		// does not split on, and stopping at CR left the same defect one encoding
+		// over: `A=1<LS>B=2` was one variable holding the rest of the secrets, and
+		// a '#' first line sent the whole file into the comment skip — an empty
+		// environment, silently, exit 0.
+		{"LS-separated file", "A=1" + lsSep + "B=" + envFileSecret + "\n", "line 1: contains a Unicode line separator"},
+		{"PS-separated file", "A=1" + psSep + "B=" + envFileSecret + "\n", "line 1: contains a Unicode line separator"},
+		{"NEL-separated file", "A=1" + nelSep + "B=" + envFileSecret + "\n", "line 1: contains a Unicode line separator"},
+		{"LS-separated file starting with a comment", "# secrets" + lsSep + "A=" + envFileSecret + lsSep, "line 1: contains a Unicode line separator"},
 		{"NUL byte", "A=x\x00" + envFileSecret + "\n", "line 1: contains a NUL byte"},
 		{"NUL byte in a comment", "#x\x00" + envFileSecret + "\nA=1\n", "line 1: contains a NUL byte"},
 		// An invisible character cannot be shown in a message that must not quote

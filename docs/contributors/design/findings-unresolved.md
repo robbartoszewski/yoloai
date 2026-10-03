@@ -1347,13 +1347,13 @@ earlier signal and records nothing else.
 - **What would actually close it:** typecheck the research corpus for a fixed platform rather than the host's (mypy's `--platform`), so both hosts agree — or accept that the corpus is Linux-only and exclude it from the macOS run. Either makes the gate say the same thing on both machines, which is the property it currently lacks.
 - **Pointer:** `docs/contributors/design/research/mac-channel/c1_guest_initiate.py`; `docs/contributors/design/research/mac-channel/c1_guest_vsock.py` (the convention); `Makefile` (`python-typecheck`).
 
-### DF237 — a bug report's three redactors each cover one surface, so a secret is caught only if it arrived on the right one
+### DF237 — a bug report's redactors each cover one surface, so a secret is caught only if it arrived on the right one
 
 - **Discovered:** 2026-10-03, while redacting `--env` values out of the recorded command line (`--env-file`, the secret-passing work) · **Workstream:** secret passing
 - **Severity:** LOW — it needs a secret in config under a name that reads as ordinary; the common names are covered
 - **Disposition:** UNRESOLVED — PARKED. The instance that prompted it (argv) is fixed; the class is not.
 - **Rides:** **any**.
-- **Description:** A bug report redacts in four independent places, each knowing only its own surface:
+- **Description:** A bug report's redaction is per-surface: each rule knows only its own section, and the table below is the whole of it — no count in prose, because nothing enforces one and this entry's heading and body already disagreed about it once (D121).
 
   | Surface | Redactor | Rule |
   | --- | --- | --- |
@@ -1364,7 +1364,7 @@ earlier signal and records nothing else.
 
   The value-shaped rule never meets the name-shaped ones, and the exit line has neither: `WriteExit` prints the error verbatim, so whatever an error message quotes is published. So whether a secret is published depends on which section it arrived in, not on what it is. The pattern set in `sanitizeText` — PEM blocks, known key prefixes, connection strings, JWTs, long hex/base64 — is not applied to the config bytes, and the keyword list is not applied to the logs.
 - **Verified, not inferred.** Rendering a safe report over `env:\n  DB_DSN: postgres://user:hunter2@db.example/app\n  SHORT_TOKEN: abc123def\n` publishes the DSN verbatim and redacts `SHORT_TOKEN` — the first because no keyword matches `DB_DSN`, the second only because its *name* contains "token". The same DSN in the live log is caught by `sanitizeText`'s connection-string pattern. `env:` is the sharp edge because its keys are arbitrary user-chosen names, so the keyword list is being asked to guess them.
-- **The shape, which is the point of filing it:** four redactors for one job, each complete on its own axis and blind on the others. `--env` on argv was the third instance of the same class in two days of looking, and the exit line the fourth (the first: `--prompt`, which is redacted; the second: the config section, which is this). A fix that keeps the surfaces separate will keep generating these; running every rendered section through `sanitizeText` in safe mode — i.e. one value-shaped pass over the whole document, with the name-shaped rules left as the belt to its braces — is the version that stops. The exit line is the cheapest piece and the one with no rule at all.
+- **The shape, which is the point of filing it:** a redactor per surface, each complete on its own axis and blind on the others — `--prompt` on argv, the config section, `--env` on argv, and the exit line, which has no rule at all. The class also generates defects *inside* a redactor: `redactEnvArgs` and `redactPromptArgs` both walked the slice they were rewriting, so `--env --env KEY=VAL` — one redaction overwriting the next flag — published the value in both report types. Fixed in place (both read their decisions from the untouched argv now) and recorded here because it is the same root: the rule lives next to the surface and nothing holds the surfaces to one standard. A fix that keeps the surfaces separate will keep generating these; running every rendered section through `sanitizeText` in safe mode — i.e. one value-shaped pass over the whole document, with the name-shaped rules left as the belt to its braces — is the version that stops. The exit line is the cheapest piece and the one with no rule at all.
 - **The exit line is why two error messages in the `--env`/`--env-file` path are worded as they are:** the `--env-file` parser never quotes the file's content, and `--env`'s parse error names which occurrence was malformed rather than echoing the token. Both were written against this finding rather than around it; neither is a substitute for the missing redactor, because any other error that happens to quote user input still lands there unredacted.
 - **Not quietly worked around.** The `--env` fix is deliberately narrow (one flag, both report types) and makes no claim about the other sections.
 - **Pointer:** `internal/cli/bugreport/writer.go` — `writeConfigSection`/`sanitizeYAMLConfig`, `WriteLiveLog`/`SanitizeJSONLBytes`/`sanitizeText`, `WriteCommandInvocation`/`redactEnvArgs`, `WriteExit` (the one with no redactor). Documented behaviour: [bugreport.md § 2. Command Invocation](bugreport.md). The user-facing promise this is measured against: [GUIDE.md § Passing secrets to the sandbox](../../GUIDE.md#passing-secrets-to-the-sandbox), which tells users a report redacts `--env` and still to read one before attaching it.
@@ -1388,6 +1388,25 @@ earlier signal and records nothing else.
 - **Already fixed in place, because it was not a rejection:** `--env`'s parse error used to quote the whole token, so `--env 'API_TOKEN s3cret'` put the secret in an error — and an error reaches a bug report's exit line, which has no redactor ([DF237](findings-unresolved.md)). It now names the occurrence number instead. That changes no input's acceptance, which is why it did not need the owner.
 - **What would close it:** validate `--env` keys with the same pattern and refuse a doubled key, in a release that is already breaking, with a `docs/BREAKING-CHANGES.md` entry. The staging-filename coupling is worth its own look even then: a key that is a path at all is a defect the staging layer could refuse on its own, independently of what the CLI accepts.
 - **Pointer:** `internal/cli/lifecycle/new.go` (`parseEnvSlice`); `internal/cli/lifecycle/envfile.go` (`parseEnvFileData`, the validating sibling); `internal/envsetup/envsetup.go` (`StageSecretEnv`, where a key becomes a filename); `internal/orchestrator/launch/launch.go` (`usesAgentFreeLaunch`, which decides whether the staging path runs at all).
+
+### DF239 — `config.md` and the shipped config template say `env:` values are delivered as `/run/secrets/` files, which is false wherever the agent-free launch path runs
+
+- **Discovered:** 2026-10-03, while sweeping the surfaces that describe env delivery for `--env-file` (KAN-28) · **Workstream:** secret passing
+- **Severity:** LOW — the delivery is correct either way; the documentation is what is wrong, on the page a contributor reads to learn the mechanism
+- **Disposition:** UNRESOLVED. Not fixed here because the fix is a claim inside rule 13's citation scope, not because it is defensible.
+- **Rides:** **any**.
+- **Description:** Two places state the delivery unconditionally:
+
+  | Where | Claim |
+  | --- | --- |
+  | `design/config.md` (`env` under "Implemented settings") | "Values are written as files in `/run/secrets/` (same mechanism as API keys)" |
+  | `design/config.md`, the annotated `config.yaml` template | "`env: {}` — Environment variables forwarded to container via `/run/secrets/`" |
+
+  `usesAgentFreeLaunch` (`internal/orchestrator/launch/launch.go`) decides between the two deliveries, and on the path it selects — a `ProcessLauncher` backend that opts in, under an isolation mode whose agent launch runs host-side — the resolved map goes into `ProcSpec.Env` and **no `/run/secrets` mount is created at all** (`mountspkg.Build(st, secretsDir)` is called with `secretsDir == ""`). Today that path is Docker outside gVisor; everything else stages files. So the claim is false exactly where yoloAI's default backend runs in its default isolation mode.
+- **Verified, not inferred.** `launch.go` takes the staging branch only under `!agentFree`, and sets `secretEnv = nil` in it with the comment "legacy delivers via the bind-mounted files, not ProcSpec.Env"; the agent-free branch leaves `secretsDir` empty, which `mountspkg.Build` reads as "no `/run/secrets` mount". `runtime/docker/launch.go` passes `Env: spec.Env` to the launcher. Confirmed against `GUIDE.md § Passing secrets to the sandbox`, whose own description of the split was corrected in the same ticket and now disagrees with `config.md`.
+- **Why it is filed rather than fixed:** `docs/contributors/design/config.md` is inside `scripts/check_claim_citations.py`'s scope (AGENTS.md rule 13), so a corrected sentence asserting which path delivers how is a load-bearing architectural claim needing a `TestArch_` test to hold it — a new mechanism, in a file this ticket does not otherwise touch, written under a definition of done that is about `--env-file`. Recording it beats either leaving a silent workaround or landing an uncited claim.
+- **What would close it:** correct both sentences to name the condition, and add the `TestArch_` test the scope requires — most naturally one asserting that `usesAgentFreeLaunch`'s two branches are exactly the two deliveries, which is also the claim `GUIDE.md` now makes to users.
+- **Pointer:** `docs/contributors/design/config.md` (the `env` bullet and the template comment); `internal/orchestrator/launch/launch.go` (`usesAgentFreeLaunch`, `LaunchContainer`'s delivery split); `internal/envsetup/envsetup.go` (`StageSecretEnv`); `internal/orchestrator/mounts/mounts.go` (`Build`); [GUIDE.md § Passing secrets to the sandbox](../../GUIDE.md#passing-secrets-to-the-sandbox).
 
 ## Policy origin
 

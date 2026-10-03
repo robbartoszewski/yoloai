@@ -22,14 +22,19 @@ KEY SETTINGS
 
   agent              Agent to use (default: claude)
   model              Model name or alias (default: agent's default)
-  container_backend  Runtime backend: docker, podman, tart, seatbelt, containerd
+  container_backend  Runtime backend: docker, podman, containerd, apple,
+                     tart, seatbelt
   isolation          Isolation mode (container backends only): container,
                      container-enhanced (gVisor), container-privileged,
                      vm (Kata+QEMU), vm-enhanced (Kata+Firecracker).
                      VM modes are experimental.
   os                 Target OS: linux (default), mac
   tmux_conf          Tmux config mode: default+host, default, host, none
-  env.<NAME>         Environment variable forwarded to container
+  env.<NAME>         Environment variable forwarded to container. Not for
+                     secrets: config is a file and stays one, and a bug
+                     report publishes a config value unless its key name
+                     reads as sensitive. Use --env-file for those —
+                     see: yoloai help security
 
 EXAMPLES
 

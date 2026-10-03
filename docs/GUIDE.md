@@ -851,13 +851,17 @@ The agent's own LLM credential needs none of this — yoloai takes it from its o
 yoloai new task ./project --env-file ./secrets.env
 yoloai start task --env-file ./secrets.env        # same for restart, and reset --restart
 
-# Or pipe them in, so they never touch the disk either
+# Or pipe them in, so you need no secrets file of your own
 printf 'API_TOKEN=%s\n' "$token" | yoloai new task ./project --env-file -
 ```
 
 `--env-file` is available on `new`, `run`, `start`, `restart` and `reset`, wherever `--env` is. `--env` keeps working unchanged for values that are not secret.
 
-The path accepts `~` and `${VAR}`, as `--prompt-file` does. `--env-file` takes one file: passing it twice uses the last, like every other path flag here. An empty value — `--env-file "$SECRETS"` with `SECRETS` unset — is an error rather than "no file", because a sandbox that silently starts without the secrets you told it to carry is the outcome this flag exists to prevent.
+The stdin form keeps the values out of a file *you* manage; it does not promise they never reach disk at all, because on most backends yoloai stages them as owner-only files to deliver them — see "Where the value goes" below.
+
+The path accepts `~`, and `${VAR}` for the small set of variables config interpolation allows (`HOME`, `USER`, `LANG`, `TZ`, `LC_*`), as `--prompt-file` does — `${SECRETS_DIR}` is an error even when it is set in your shell, so use `$SECRETS_DIR` and let the shell expand it. `--env-file` takes one file: passing it twice uses the last, as `--prompt-file` does (unlike `--dir` and `--env`, which accumulate). An empty value — `--env-file "$SECRETS"` with `SECRETS` unset — is an error rather than "no file", because a sandbox that silently starts without the secrets you told it to carry is the outcome this flag exists to prevent. A file that exists and sets nothing is *not* an error: an empty file is a thing you can mean, where an empty path is only ever an accident.
+
+If you are also feeding a prompt in on stdin, only one of them can have it: `--env-file -` together with `--prompt -` or `--prompt-file -` is refused rather than letting whichever read second see an exhausted stream.
 
 The file is a list of `KEY=VAL` lines:
 
@@ -866,16 +870,16 @@ The file is a list of `KEY=VAL` lines:
 - **The value is literal to the end of the line.** No quote stripping, no `$VAR` or `${VAR}` expansion, trailing spaces kept: `A="x"` sets `A` to `"x"`, quotes included. `.env` files written for a dotenv library that unquotes values will not mean the same thing here.
 - The key is a plain variable name (`[A-Za-z_][A-Za-z0-9_]*`). `export FOO=1` is rejected, as is `FOO = 1`.
 - Setting the same variable twice — twice in the file, or once in the file and once in `--env` — is an error. There is no precedence rule to remember, and neither value is silently discarded. (Repeating `--env` itself keeps its long-standing behaviour: the last one wins.)
-- CRLF files are fine — a trailing CR is not part of the value — and a leading byte-order mark is ignored. A CR anywhere else, or a NUL, is an error rather than a guess: a CR-only file is one line to this parser, so it would otherwise parse as a single variable holding the rest of your secrets, or as nothing at all if that line began with `#`.
+- CRLF files are fine — a trailing CR is not part of the value — and a leading byte-order mark is ignored. A CR anywhere else, a Unicode line separator (`U+0085`, `U+2028`, `U+2029`), or a NUL is an error rather than a guess: **lines are split on LF only**, so a file terminated any other way is one line to this parser, and it would otherwise parse as a single variable holding the rest of your secrets — or as nothing at all if that line began with `#`.
 - Errors give the line number and never quote the line, so a malformed secret does not end up in your terminal or in a bug report's exit line.
 
 **The file's permissions are yours to set.** yoloai reads whatever path you give it and does not insist on `0600`, because the alternative — refusing the file — only pushes the value back onto the command line, which is worse. If the secret is long-lived, `chmod 600` it.
 
-**Where the value goes.** Inside the sandbox these are ordinary environment variables for the agent's process, exactly as `--env`'s are — `--env-file` changes how the value reaches yoloai, not how the sandbox sees it. On backends that cannot be handed an environment at launch, yoloai stages the values as owner-only files (`0700` dir, `0600` files) and bind-mounts them at `/run/secrets`, removing the staging directory once the container has started. So on those backends the value touches host disk briefly, readable only by you.
+**Where the value goes.** Inside the sandbox these are ordinary environment variables for the agent's process, exactly as `--env`'s are — `--env-file` changes how the value reaches yoloai, not how the sandbox sees it. How it is *delivered* depends on the sandbox: where yoloai can hand the launched process an environment directly it does, and everywhere else it stages the values as owner-only files (`0700` dir, `0600` files), bind-mounts them at `/run/secrets`, and removes the staging directory once the container has started — so there the value touches host disk briefly, readable only by you. **The staging path is the common case, not the exception:** the direct form needs Docker *and* an isolation mode whose agent launch runs host-side, so Podman, containerd, Apple Container, Tart and Seatbelt all stage, and so does Docker under `--isolation container-enhanced` (gVisor).
 
 **What yoloai writes down.** A per-sandbox environment is not persisted: `--env` and `--env-file` values are re-supplied on each `start`/`restart`/`reset` by design, and nothing records them in the sandbox's metadata. The exception is the `env:` key in `config.yaml` or a profile, which is a file and stays one — a bug report includes your config and redacts only values whose *key name* reads as sensitive, so a secret under an ordinary-looking name (`DB_DSN`) is published. Keep secrets out of config and in `--env-file`.
 
-A bug report written by `--bugreport` records the command line you ran, with `--env` values redacted to `KEY=[REDACTED]` in both the safe and unsafe forms; `yoloai sandbox <name> bugreport` records no command line at all. It is still worth reading a report before attaching it to an issue.
+A bug report written by `--bugreport` records the command line you ran, with every `--env` value redacted in both the safe and unsafe forms — to `KEY=[REDACTED]`, or to a bare `[REDACTED]` for a token with no `=` in it, since a mistyped `--env` argument may be the secret on its own. `yoloai sandbox <name> bugreport` records no command line at all. It is still worth reading a report before attaching it to an issue.
 
 ### Credential Brokering
 

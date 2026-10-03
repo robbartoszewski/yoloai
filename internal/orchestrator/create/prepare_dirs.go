@@ -229,7 +229,8 @@ func checkDirOverlaps(workdir *DirSpec, auxDirs []*DirSpec) error {
 // has uncommitted git changes, unless that directory opted in via AllowDirty.
 // It never prompts: a dirty directory the caller has not acked yields a
 // *DirtyWorkdirError the caller must consciously override. The CLI catches it,
-// prompts, and retries with AllowDirty set.
+// prints the warning, and retries with AllowDirty set only when --allow-dirty
+// was given — it does not prompt either (createSandboxWithDirtyRetry).
 func checkDirtyRepos(ctx context.Context, g *git.Git, workdir *DirSpec, auxDirs []*DirSpec) error {
 	var dirty []yoerrors.DirtyDir
 	check := func(d *DirSpec) error {

@@ -10,14 +10,15 @@ CREATING SANDBOXES (yoloai new)
 
   --agent <name>      Agent to use (claude, gemini, etc.)
   --model, -m <name>  Model name or alias
-  --backend <name>    Runtime backend (docker, podman, tart, seatbelt,
-                      containerd)
+  --backend <name>    Runtime backend (docker, podman, containerd,
+                      apple, tart, seatbelt)
   --prompt, -p <text> Prompt for headless mode
   --prompt-file, -f   File containing the prompt
   --dir, -d <path>    Auxiliary directory (repeatable)
   --env KEY=VAL       Environment variable (repeatable). Not for secrets:
-                      the value is on yoloai's command line, where
-                      other local users can read it with 'ps'
+                      the value is on yoloai's command line, which
+                      other local users can usually read with 'ps'
+                      (always on macOS; on Linux without hidepid)
   --env-file <path>   Read env vars from a file of KEY=VAL lines, or from
                       stdin with '-'. Use this for secrets. Also on
                       run, start, restart and reset.
