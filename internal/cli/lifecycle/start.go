@@ -60,6 +60,26 @@ func NewStartCmd() *cobra.Command {
 	return cmd
 }
 
+// resolveStartOptions builds the library options for `start` from the parsed
+// flags. Separate from runStart so the flag-to-options wiring — which is where a
+// resolved environment gets dropped on the floor without anything failing — is
+// reachable from a test that needs no backend.
+func resolveStartOptions(cmd *cobra.Command, opts *startOpts) (yoloai.SandboxStartOptions, error) {
+	envMap, err := resolveEnvFromFlags(cmd)
+	if err != nil {
+		return yoloai.SandboxStartOptions{}, err
+	}
+	return yoloai.SandboxStartOptions{
+		Resume:       opts.resume,
+		Prompt:       opts.prompt,
+		PromptFile:   opts.promptFile,
+		VscodeTunnel: opts.vscodeTunnel,
+		Env:          envMap,
+		Broker:       opts.broker,
+		NoBroker:     opts.noBroker,
+	}, nil
+}
+
 // runStart implements the start command body.
 func runStart(cmd *cobra.Command, args []string, opts *startOpts) error {
 	name, _, err := cliutil.ResolveName(cmd, args)
@@ -77,22 +97,14 @@ func runStart(cmd *cobra.Command, args []string, opts *startOpts) error {
 		defer cliutil.SetTerminalTitle("")
 	}
 
-	envMap, err := resolveEnvFromFlags(cmd)
+	startOptions, err := resolveStartOptions(cmd, opts)
 	if err != nil {
 		return err
 	}
 
 	slog.Info("starting sandbox", "event", "sandbox.start", "sandbox", name)
 	return cliutil.WithSandbox(cmd, name, func(ctx context.Context, sb *yoloai.Sandbox) error {
-		res, startErr := sb.Start(ctx, yoloai.SandboxStartOptions{
-			Resume:       opts.resume,
-			Prompt:       opts.prompt,
-			PromptFile:   opts.promptFile,
-			VscodeTunnel: opts.vscodeTunnel,
-			Env:          envMap,
-			Broker:       opts.broker,
-			NoBroker:     opts.noBroker,
-		})
+		res, startErr := sb.Start(ctx, startOptions)
 		if res != nil {
 			cliutil.RenderNotices(cmd, res.Notices)
 		}
