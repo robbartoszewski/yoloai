@@ -20,7 +20,6 @@ type restartOpts struct {
 	promptFile   string
 	isolation    string
 	vscodeTunnel bool
-	env          []string
 	broker       bool
 	noBroker     bool
 }
@@ -41,7 +40,7 @@ func NewRestartCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&opts.promptFile, "prompt-file", "f", "", "File containing new prompt")
 	cmd.Flags().StringVar(&opts.isolation, "isolation", "", "Override isolation mode (e.g. container-privileged for Docker-in-Docker)")
 	cmd.Flags().BoolVar(&opts.vscodeTunnel, "vscode-tunnel", false, "Enable VS Code Remote Tunnel (persisted; tunnel starts with the restarted container)")
-	cmd.Flags().StringArrayVar(&opts.env, "env", nil, "Per-sandbox env var KEY=VAL (not persisted; re-supply on each restart)")
+	addEnvFlags(cmd, perStartEnvUsage("restart"))
 	// INTERIM SHAPE — see the note on the same pair in start.go, and DF225. Two
 	// booleans for one tri-state, matching `new` deliberately rather than fixing
 	// it here, because the encoding also lives in the persisted meta and cannot
@@ -75,7 +74,7 @@ func runRestart(cmd *cobra.Command, args []string, opts *restartOpts) error {
 		defer cliutil.SetTerminalTitle("")
 	}
 
-	envMap, err := parseEnvSlice(opts.env)
+	envMap, err := resolveEnvFromFlags(cmd)
 	if err != nil {
 		return err
 	}

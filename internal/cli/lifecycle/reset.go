@@ -23,7 +23,6 @@ type resetOpts struct {
 	keepFiles        bool
 	attach           bool
 	debug            bool
-	env              []string
 }
 
 func NewResetCmd() *cobra.Command {
@@ -43,7 +42,7 @@ func NewResetCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.keepCache, "keep-cache", false, "Preserve cache directory")
 	cmd.Flags().BoolVar(&opts.keepFiles, "keep-files", false, "Preserve files directory")
 	cmd.Flags().BoolVarP(&opts.attach, "attach", "a", false, "Auto-attach after restart (implies --restart)")
-	cmd.Flags().StringArrayVar(&opts.env, "env", nil, "Per-sandbox env var KEY=VAL applied on --restart (not persisted)")
+	addEnvFlags(cmd, resetEnvUsage)
 
 	return cmd
 }
@@ -70,7 +69,7 @@ func runReset(cmd *cobra.Command, args []string, opts *resetOpts) error {
 		defer cliutil.SetTerminalTitle("")
 	}
 
-	envMap, err := parseEnvSlice(opts.env)
+	envMap, err := resolveEnvFromFlags(cmd)
 	if err != nil {
 		return err
 	}

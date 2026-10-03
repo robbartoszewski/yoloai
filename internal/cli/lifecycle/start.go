@@ -20,7 +20,6 @@ type startOpts struct {
 	prompt       string
 	promptFile   string
 	vscodeTunnel bool
-	env          []string
 	broker       bool
 	noBroker     bool
 }
@@ -40,7 +39,7 @@ func NewStartCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&opts.prompt, "prompt", "p", "", "New prompt text (overwrites existing prompt)")
 	cmd.Flags().StringVarP(&opts.promptFile, "prompt-file", "f", "", "File containing new prompt")
 	cmd.Flags().BoolVar(&opts.vscodeTunnel, "vscode-tunnel", false, "Enable VS Code Remote Tunnel (persisted; takes effect on container recreate)")
-	cmd.Flags().StringArrayVar(&opts.env, "env", nil, "Per-sandbox env var KEY=VAL (not persisted; re-supply on each start)")
+	addEnvFlags(cmd, perStartEnvUsage("start"))
 	// INTERIM SHAPE — do not copy this as a pattern (DF225). One tri-state
 	// (auto / required / disabled) carried as two booleans whose fourth
 	// combination is meaningless and is excluded at runtime below rather than by
@@ -78,7 +77,7 @@ func runStart(cmd *cobra.Command, args []string, opts *startOpts) error {
 		defer cliutil.SetTerminalTitle("")
 	}
 
-	envMap, err := parseEnvSlice(opts.env)
+	envMap, err := resolveEnvFromFlags(cmd)
 	if err != nil {
 		return err
 	}
