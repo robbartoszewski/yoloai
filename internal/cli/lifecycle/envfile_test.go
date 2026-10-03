@@ -91,7 +91,14 @@ func TestParseEnvFileData_Errors(t *testing.T) {
 		// of the secrets — silently, with the other keys simply missing.
 		{"CR-only line endings", "A=1\rB=" + envFileSecret + "\r", "line 1: contains a carriage return"},
 		{"CR inside a value", "A=x\ry=" + envFileSecret + "\n", "line 1: contains a carriage return"},
+		// The CR checks have to run before comments are skipped. A '#' header is
+		// the ordinary first line of a secrets file, and a CR-only file is one
+		// line: skipping first discarded the whole file as a comment and started
+		// the sandbox with an empty environment, silently, exit 0.
+		{"CR-only file starting with a comment", "# secrets\rA=" + envFileSecret + "\r", "line 1: contains a carriage return"},
+		{"CR-only file starting with an indented comment", "  # secrets\rA=" + envFileSecret + "\r", "line 1: contains a carriage return"},
 		{"NUL byte", "A=x\x00" + envFileSecret + "\n", "line 1: contains a NUL byte"},
+		{"NUL byte in a comment", "#x\x00" + envFileSecret + "\nA=1\n", "line 1: contains a NUL byte"},
 		// An invisible character cannot be shown in a message that must not quote
 		// the line, so the message names the possibility instead.
 		{"non-breaking space before the key", "\u00a0A=" + envFileSecret + "\n", "invisible character"},
@@ -190,6 +197,8 @@ func TestEnvFilePath(t *testing.T) {
 
 	// Matches --prompt-file, which expands via config.ExpandPath. A quoted
 	// ~/secrets.env reaches the flag unexpanded by the shell.
+	//
+	// Not parallel: clitest.Home sets a process-wide Layout.
 	t.Run("tilde is expanded as on --prompt-file", func(t *testing.T) {
 		home := clitest.Home(t)
 		cmd := NewStartCmd()
@@ -197,6 +206,29 @@ func TestEnvFilePath(t *testing.T) {
 		got, err := envFilePath(cmd)
 		require.NoError(t, err)
 		assert.Equal(t, filepath.Join(home, "secrets.env"), got)
+	})
+
+	// The same silence, one hop later: a ${VAR} on the interpolation allowlist can
+	// be set and empty, and an empty expansion would be read as "no file" by the
+	// caller. Refusing only the pre-expansion value would watch a proxy.
+	t.Run("a ${VAR} that expands to nothing is refused too", func(t *testing.T) {
+		t.Setenv("TZ", "")
+		clitest.Home(t)
+		cmd := NewStartCmd()
+		require.NoError(t, cmd.Flags().Parse([]string{"--env-file", "${TZ}"}))
+		_, err := envFilePath(cmd)
+		assertUsageError(t, err, "expanded to an empty path")
+	})
+
+	// An ordinary path must not reach cliutil.Layout() at all: it panics when the
+	// root Layout is unset, which would make every caller of this depend on
+	// process-wide state for a path that needs no expansion.
+	t.Run("an ordinary path needs no Layout", func(t *testing.T) {
+		cmd := NewStartCmd()
+		require.NoError(t, cmd.Flags().Parse([]string{"--env-file", "/tmp/secrets.env"}))
+		got, err := envFilePath(cmd)
+		require.NoError(t, err)
+		assert.Equal(t, "/tmp/secrets.env", got)
 	})
 }
 
@@ -252,11 +284,12 @@ func newEnvVerbCmd(t *testing.T, verb string) *cobra.Command {
 // the value arrives in the environment the sandbox is given, and no flag on the
 // command holds it — only the path.
 //
-// The second assertion walks the parsed flag set rather than the argument slice
-// the test just built: a slice of literals this test wrote cannot contain the
-// secret whatever the code does, so asserting on it would measure the fixture.
-// Walking the flags states the actual property — the value exists only in the
-// resolved map — and fails if --env-file ever grows an inline form.
+// The assert.Equal is the measuring assertion. The flag-set walk below it is a
+// **tripwire, not evidence**: this test only ever puts a path on the command line,
+// so no flag value can hold the secret whatever the resolver does, and gutting the
+// resolver leaves the walk green. It is here to fail a future change that gives
+// --env-file an inline form, and it replaced an assertion over a literal slice the
+// test itself wrote, which was the same shape with none of that forward value.
 func TestEnvFileFlag_ReachesEveryVerb(t *testing.T) {
 	for _, verb := range envVerbs {
 		t.Run(verb, func(t *testing.T) {
@@ -397,7 +430,12 @@ func TestResolveEnvFromFlags_StdinContention(t *testing.T) {
 // TestResolveCreateOptions_EnvFileReachesTheSandboxOptions follows the value one
 // step past the resolver, for the one verb a unit test can reach that far: out of
 // the file and into the options the sandbox is actually created with.
+// Not parallel, and it establishes its own Layout: resolveCreateOptions resolves
+// dir specs through cliutil.Layout(), which panics when the root Layout is unset.
+// Relying on another test file in this package to have set it would make this pass
+// or fail by test order.
 func TestResolveCreateOptions_EnvFileReachesTheSandboxOptions(t *testing.T) {
+	clitest.Home(t)
 	cmd := NewNewCmd("test")
 	require.NoError(t, cmd.Flags().Set("env-file", writeEnvFile(t, "API_TOKEN="+envFileSecret+"\n")))
 
