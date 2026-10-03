@@ -309,12 +309,18 @@ func parsePortFlags(rawPorts []string) ([]yoloai.PortMapping, error) {
 }
 
 // parseEnvSlice parses KEY=VAL env flag values into a map.
+//
+// The error names which --env occurrence was wrong and not what it contained. A
+// mistyped separator — `--env 'API_TOKEN s3cret'` — puts the secret in the error,
+// and an error is copied verbatim into a bug report's exit line, which has no
+// redactor of its own in either report type (DF237). The occurrence number is
+// enough to find it, since the user still has the command line in front of them.
 func parseEnvSlice(envSlice []string) (map[string]string, error) {
 	envMap := make(map[string]string, len(envSlice))
-	for _, e := range envSlice {
+	for i, e := range envSlice {
 		k, v, ok := strings.Cut(e, "=")
 		if !ok {
-			return nil, yoerrors.NewUsageError("invalid --env value %q: must be KEY=VAL", e)
+			return nil, yoerrors.NewUsageError("invalid --env value (#%d): must be KEY=VAL", i+1)
 		}
 		envMap[k] = v
 	}
