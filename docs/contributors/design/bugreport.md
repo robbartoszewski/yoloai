@@ -189,7 +189,7 @@ The command operates in one of three mutually exclusive modes selected by flag. 
 
 ### Report types
 
-Both mechanisms accept a required `<type>` argument:
+Both mechanisms take a `<type>` argument. `--bugreport` requires it; `yoloai sandbox <name> bugreport` defaults to `safe` when it is omitted.
 
 | Type | Description |
 |------|-------------|

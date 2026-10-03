@@ -38,7 +38,10 @@ PASSING YOUR OWN SECRETS
   literal to end of line (no quote stripping, no $VAR expansion).
   Setting the same variable twice — in the file, or in both the
   file and --env — is an error rather than a silent last-wins.
-  File permissions are yours to set; yoloai reads what you give it.
+  (Repeating --env itself still takes the last one, as it always
+  has, and so does repeating --env-file.) A CRLF file is fine; a
+  CR-only one is refused rather than guessed at. File permissions
+  are yours to set; yoloai reads what you give it.
 
   --env still works, unchanged, for values that are not secret.
 

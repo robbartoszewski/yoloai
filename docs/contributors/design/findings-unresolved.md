@@ -1359,7 +1359,7 @@ earlier signal and records nothing else.
   | --- | --- | --- |
   | The command line (section 2) | `redactPromptArgs`, `redactEnvArgs` | named flags only |
   | Config YAML (section 5) | `sanitizeYAMLConfig` | **key-name keywords only** |
-  | The JSONL sections and the live log (7–12, 13) | `SanitizeJSONLBytes` → `sanitizeText` | **value patterns only** |
+  | The JSONL sections and the live log (7–10, 13) | `SanitizeJSONLBytes` → `sanitizeText` | **value patterns only** |
   | The exit line (section 14) | — | **nothing, in either report type** |
 
   The value-shaped rule never meets the name-shaped ones, and the exit line has neither: `WriteExit` prints the error verbatim, so whatever an error message quotes is published. So whether a secret is published depends on which section it arrived in, not on what it is. The pattern set in `sanitizeText` — PEM blocks, known key prefixes, connection strings, JWTs, long hex/base64 — is not applied to the config bytes, and the keyword list is not applied to the logs.
