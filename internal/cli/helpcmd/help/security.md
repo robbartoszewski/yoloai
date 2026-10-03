@@ -11,12 +11,15 @@ COPY PROTECTION
 
 CREDENTIAL INJECTION
 
-  By default the agent's API key never enters the sandbox at all: it
-  is held host-side and brokered (see 'yoloai help' and the guide).
-  A credential that cannot be brokered is mounted as a read-only
-  file at /run/secrets/ rather than put in the config, except where
-  yoloai hands the launched agent its environment directly. Temp
-  files on the host are cleaned up after container start.
+  On supported setups (Linux docker by default) the agent's API key
+  is held host-side and brokered, so it never enters the sandbox at
+  all. Everywhere else it is delivered the same way your own
+  --env-file values are: written to an owner-only file and bind-
+  mounted at /run/secrets/, or handed straight to the launched
+  agent's environment on the one backend that takes it that way.
+  Host-side staging files are cleaned up after container start.
+  Which backend does which, and how long a value is on disk:
+  GUIDE.md, "Passing secrets to the sandbox".
 
   On macOS, yoloai checks the Keychain for Claude Code OAuth
   credentials automatically.
@@ -43,13 +46,13 @@ PASSING YOUR OWN SECRETS
   file and --env — is an error rather than a silent last-wins.
   (Repeating --env itself still takes the last one, as it always
   has, and so does repeating --env-file.) Lines are split on LF
-  only: a CRLF file is fine, and any other line ending — a lone CR,
-  or U+0085/U+2028/U+2029 — is refused rather than guessed at, since
-  the guess would be one variable holding the rest of the file. An
-  empty file sets nothing and is allowed; an empty --env-file value
-  is not. File permissions are yours to set; yoloai reads what you
-  give it, and on most backends delivers the values as owner-only
-  files under /run/secrets.
+  only, so every other line terminator is refused rather than
+  guessed at — a lone CR, VT, FF, U+0085, U+2028, U+2029 — since the
+  guess would be one variable holding the rest of the file. A value
+  need not be valid UTF-8. An empty file sets nothing and is
+  allowed; an empty --env-file value is not. File permissions are
+  yours to set; yoloai reads what you give it, and on most backends
+  writes the values to owner-only files to deliver them.
 
   --env still works, unchanged, for values that are not secret.
 
@@ -70,8 +73,9 @@ CLAUDE CODE SUBSCRIPTION USERS (Pro/Max/Team)
 
 DIRTY REPO WARNING
 
-  If your workdir has uncommitted git changes, yoloai prompts before
-  proceeding so you don't lose work.
+  If your workdir has uncommitted git changes, yoloai refuses to
+  start so you don't lose work. It never prompts: re-run with
+  --allow-dirty if you meant to include them.
 
 NETWORK ISOLATION
 

@@ -56,72 +56,71 @@ func WriteHeader(w io.Writer, version, commit, date, reportType string) {
 // WriteCommandInvocation writes section 2: the full command invocation.
 // --env values are redacted in every report; --prompt / -p only in safe ones.
 func WriteCommandInvocation(w io.Writer, reportType string) {
-	args := redactEnvArgs(os.Args)
-	if reportType == "safe" {
-		args = redactPromptArgs(args)
-	}
-	cmd := strings.Join(args, " ")
+	cmd := strings.Join(redactArgs(os.Args, reportType), " ")
 	fmt.Fprintf(w, "**Command:** `%s`\n\n", cmd) //nolint:errcheck // G705: cmd is constructed from os.Args which are caller-controlled, not attacker-controlled
 }
 
-// redactPromptArgs redacts the values of --prompt / -p flags.
+// redactArgs rewrites section 2's copy of argv: --env values in every report,
+// --prompt / -p values in a safe one.
 //
-// Decisions are read from args and only written to result: iterating over the
-// slice being rewritten lets one redaction hide the next flag, so
-// `--prompt --prompt <secret>` published the secret (see redactEnvArgs, which
-// had the same defect on a surface where the value is always a secret).
-func redactPromptArgs(args []string) []string {
-	result := make([]string, len(args))
-	copy(result, args)
-	for i, arg := range args {
-		if (arg == "--prompt" || arg == "-p") && i+1 < len(args) {
-			result[i+1] = "[REDACTED]"
-		}
-		if strings.HasPrefix(arg, "--prompt=") {
-			result[i] = "--prompt=[REDACTED]"
-		}
-	}
-	return result
-}
-
-// redactEnvArgs redacts the value half of every --env KEY=VAL argument, keeping
-// the variable's name.
-//
-// This one runs on unsafe reports too, which otherwise stay deliberately
+// --env is redacted in an unsafe report too, which otherwise stays deliberately
 // unsanitized. The reason the rest of an unsafe report is unredacted is that its
 // content is the diagnostic material — logs, agent output, config. An env
 // *value* never is: the name is the whole of what a reader of this line needs,
 // and the value is the secret a user had no way to keep off the command line
-// before --env-file existed. A report is a file people attach to a public
-// issue, so "unsafe" cannot mean "copies this one through".
+// before --env-file existed. A report is a file people attach to a public issue,
+// so "unsafe" cannot mean "copies this one through".
 //
-// --env-file is not matched here, and must not be: its value is a path, which is
+// --env-file is not matched, and must not be: its value is a path, which is
 // diagnostic, and the secrets are in the file, which this report never reads.
 //
-// This covers one flag on one surface. The report's redactors are per-surface and
-// do not share a rule — the config section matches key names only, and the exit
-// line has no redactor at all — which is parked as DF237, not fixed here.
+// **One pass, every rule reading the same untouched argv.** This was three
+// functions chained over each other's output, and that shape leaked twice: a
+// rewrite can overwrite the very token the next rule is looking for. Walking the
+// slice being rewritten published the secret in `--env --env API_TOKEN=...`
+// (--env's own rule hid the second --env from itself); chaining the two
+// redactors published the prompt from a *safe* report in `--env --prompt <text>`
+// (--env's rule rewrote the "--prompt" token, so --prompt's rule never saw one).
+// Both are ordinary duplicated-flag typos, and a typo is a failure, which is
+// when a user reaches for --bugreport. Deciding from `args` and writing only into
+// `result` makes order structurally unable to matter — which is the property, not
+// the particular argv shapes.
 //
-// Every decision is read from args and only ever written to result. Walking the
-// slice being rewritten is what made `--env --env API_TOKEN=...` — an ordinary
-// duplicated-flag typo, and a failure, which is when a user reaches for
-// --bugreport — publish the secret verbatim: the first redaction overwrote the
-// second "--env" with "[REDACTED]", so the token after it was never examined. A
-// sanitiser that rewrites its input in place must not let one rewrite hide the
-// next match; redactPromptArgs had the same defect and is fixed with it.
-func redactEnvArgs(args []string) []string {
+// This still covers two flags on one surface. The report's redactors are
+// per-surface and do not share a rule — the config section matches key names
+// only, and the exit line has no redactor at all — which is parked as DF237.
+func redactArgs(args []string, reportType string) []string {
 	result := make([]string, len(args))
 	copy(result, args)
+	// A safe report redacts prompts; an unsafe one publishes them by design.
+	redactPrompt := reportType == "safe"
 	for i, arg := range args {
-		if arg == "--env" && i+1 < len(args) {
+		switch {
+		case arg == "--env" && i+1 < len(args):
 			result[i+1] = redactEnvAssignment(args[i+1])
+		case strings.HasPrefix(arg, "--env="):
+			result[i] = "--env=" + redactEnvAssignment(strings.TrimPrefix(arg, "--env="))
 		}
-		if after, ok := strings.CutPrefix(arg, "--env="); ok {
-			result[i] = "--env=" + redactEnvAssignment(after)
+		if !redactPrompt {
+			continue
+		}
+		// Both spellings of the shorthand: cobra takes `-p=<text>` as well as
+		// `-p <text>`, and bugreport.md promises a safe report redacts --prompt
+		// *and* -p. Only the long form's '=' spelling was matched, so `-p=<text>`
+		// published the prompt.
+		switch {
+		case (arg == "--prompt" || arg == "-p") && i+1 < len(args):
+			result[i+1] = redactedValue
+		case strings.HasPrefix(arg, "--prompt="), strings.HasPrefix(arg, "-p="):
+			result[i] = arg[:strings.Index(arg, "=")+1] + redactedValue
 		}
 	}
 	return result
 }
+
+// redactedValue is what replaces a value that must not be published. One
+// spelling, so no surface can drift to a different placeholder.
+const redactedValue = "[REDACTED]"
 
 // redactEnvAssignment turns KEY=VAL into KEY=[REDACTED]. A token with no '=' is
 // malformed as a --env value, so it is replaced whole rather than published on
@@ -129,9 +128,9 @@ func redactEnvArgs(args []string) []string {
 func redactEnvAssignment(assignment string) string {
 	key, _, ok := strings.Cut(assignment, "=")
 	if !ok {
-		return "[REDACTED]"
+		return redactedValue
 	}
-	return key + "=[REDACTED]"
+	return key + "=" + redactedValue
 }
 
 // WriteDiagnostics renders sections 3–5 (System, Backends, VM slots, Config)

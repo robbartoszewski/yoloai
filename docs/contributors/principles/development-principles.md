@@ -137,7 +137,7 @@ The downward half — policy must not know the *how*:
 
 Comply-or-complain (the mechanism side):
 
-- **Create refuses, never prompts** (D24): a dirty workdir → `*DirtyWorkdirError`, unverified `requires:` → a warning, an active sandbox on destroy → `*ActiveWorkError`. The CLI catches each, prompts, and retries with the named ack (`AllowDirtyWorkdir`, `Force`). The library has no terminal.
+- **Create refuses, never prompts** (D24): a dirty workdir → `*DirtyWorkdirError`, unverified `requires:` → a warning, an active sandbox on destroy → `*ActiveWorkError`. The CLI catches each and retries with the named ack (`AllowDirtyWorkdir`, `Force`) only when the user already passed the corresponding flag — it does not prompt either; the library has no terminal and the CLI has no question to ask.
 - **Apply complains on a non-git target** (D26): `Workdir().Apply` with the default (series replay) on a non-git host path returns a `*UsageError` instead of silently degrading to a net-diff apply; the CLI checks `IsGitRepo` and selects `NoCommit` itself.
 - **No ambient backend default** (F4): an empty `Options.BackendType` selects no persistent backend rather than silently falling back to docker — a backend-bound op then returns the typed `ErrBackendRequired`. Backend selection (which probes installed daemons) is policy, resolved at the boundary via the explicit `SelectBackend` helper.
 

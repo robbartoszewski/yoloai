@@ -1,6 +1,6 @@
 // ABOUTME: --env / --env-file flag registration and parsing for the lifecycle
 // ABOUTME: verbs: KEY=VAL lines read from a file or stdin, so a secret's value
-// ABOUTME: never lands on yoloai's argv where any other local account reads it.
+// ABOUTME: never lands on yoloai's argv, which other local accounts can read.
 package lifecycle
 
 import (
@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/kstenerud/yoloai/internal/cli/cliutil"
 	"github.com/kstenerud/yoloai/internal/config"
@@ -37,17 +38,54 @@ const stdinPath = "-"
 
 var envVarNameRe = regexp.MustCompile("^" + envVarNamePattern + "$")
 
-// isUnicodeLineSeparator reports whether r is one of the line terminators this
-// parser does not split on: NEL (U+0085), LS (U+2028), PS (U+2029). Written as
-// codepoints rather than a string literal, which would be three invisible bytes
-// in the source for the next reader to take on trust.
-func isUnicodeLineSeparator(r rune) bool {
-	return r == 0x0085 || r == 0x2028 || r == 0x2029
+// containsUnsplitLineTerminator reports whether line holds a line terminator
+// this parser does not split on. Unicode's line-termination set is LF, VT, FF,
+// CR, CRLF, NEL, LS and PS (UAX #13 §4.1); parseEnvFileData splits on LF and
+// strips a trailing CR, so everything else in that set is a line ending it
+// cannot see — and a file written with one is a single line here, which is the
+// outcome the CR rule exists to refuse.
+//
+// Written as codepoints rather than a string literal: three of these are
+// invisible, and a literal would be bytes in the source for the next reader to
+// take on trust.
+//
+// The lone-0x85 case is why this decodes by hand. NEL is 0x85 in Latin-1,
+// CP1252 and anything converted from EBCDIC, where it is not valid UTF-8 — so a
+// rune-wise scan sees RuneError and the U+0085 test never fires. Checked as a
+// byte, but only for a byte that is already invalid UTF-8, so a Latin-1 value
+// byte that is not NEL (an é, 0xE9) is left alone: this parser deliberately does
+// not insist a value is valid UTF-8, because a password need not be.
+func containsUnsplitLineTerminator(line string) bool {
+	for i := 0; i < len(line); {
+		r, size := utf8.DecodeRuneInString(line[i:])
+		if r == utf8.RuneError && size == 1 {
+			if line[i] == nelByte {
+				return true
+			}
+			i++
+			continue
+		}
+		if isUnsplitLineTerminator(r) {
+			return true
+		}
+		i += size
+	}
+	return false
+}
+
+// nelByte is NEL as a single byte, which is how a legacy encoding carries it.
+const nelByte = 0x85
+
+// isUnsplitLineTerminator: VT, FF, NEL, LS, PS. Not LF (the split) and not CR
+// (its own check and its own message, because CRLF is legitimate and a lone CR
+// is the common mistake worth naming).
+func isUnsplitLineTerminator(r rune) bool {
+	return r == '\v' || r == '\f' || r == 0x0085 || r == 0x2028 || r == 0x2029
 }
 
 // createEnvUsage is the --env/--env-file help for the create verbs (new, run).
 var createEnvUsage = envFlagUsage{
-	env:     "Environment variable (KEY=VAL, repeatable). Not for secrets — the value is on the command line of every invocation you pass it to, which another local user can usually read with 'ps' (always on macOS; on Linux without hidepid). Use --env-file",
+	env:     "Environment variable (KEY=VAL, repeatable). Not for secrets — the value is on the command line of every invocation you pass it to, which another local user can usually read with 'ps'. Use --env-file",
 	envFile: "Read environment variables from a file of KEY=VAL lines, or from stdin with '-'. The way to pass a secret: the value never reaches the command line",
 }
 
@@ -132,8 +170,9 @@ func envFilePath(cmd *cobra.Command) (string, error) {
 		// UsageError. The declared rule and the practised baseline disagree;
 		// resolving that is a decision about yoerrors, not about this flag, so the
 		// divergence is stated rather than settled (development-principles.md §1).
-		// Nothing is lost that a reader needs: ExpandPath's message names the
-		// variable, and the only failure here is an unresolvable ${VAR}.
+		// Nothing is lost that a reader needs: ExpandPath's own message carries
+		// the cause in full — the variable it could not resolve, or the ${ it
+		// could not find a '}' for.
 		return "", yoerrors.NewUsageError("invalid --env-file path: %s", err)
 	}
 	// A ${VAR} on the interpolation allowlist can be set and empty, and an empty
@@ -246,9 +285,17 @@ func readEnvFileData(path string, stdin io.Reader) ([]byte, error) {
 //     skipped: a CR-only (classic Mac) file is one "line" to this parser, so
 //     guessing would turn the whole file into one variable whose value is the rest
 //     of the secrets — or, if that line starts with '#', into nothing at all.
+//   - Any other line terminator the LF split cannot see — VT, FF, NEL, LS, PS,
+//     including NEL as the lone 0x85 byte a legacy encoding carries — is an
+//     error, in the same place and on the same argument as the CR rule
+//     (containsUnsplitLineTerminator). Lines are split on LF, so this list is
+//     Unicode's line-termination set minus LF and the CRLF pair, and the rule is
+//     the set rather than whichever codepoint someone reported.
 //   - A leading UTF-8 BOM is dropped. Editors write it invisibly, and it would
 //     otherwise make the first line's key unmatchable for a reason the user
 //     cannot see.
+//   - A value need not be valid UTF-8. A password in a legacy encoding is still a
+//     password, so only the bytes above are refused, not mojibake in general.
 //   - A NUL is an error: no environment can carry one, so accepting it only moves
 //     the failure to exec, far from the file that caused it.
 //   - The key must be a plain variable name (envVarNamePattern). `export FOO=1`,
@@ -279,15 +326,16 @@ func parseEnvFileData(data []byte) (map[string]string, error) {
 		if strings.ContainsRune(line, '\r') {
 			return nil, yoerrors.NewUsageError("--env-file line %d: contains a carriage return — CRLF line endings are fine, a CR-only file is not", lineNo)
 		}
-		// The same rule for the line separators that are not LF: NEL (U+0085),
-		// LS (U+2028) and PS (U+2029) end a line for some editors and for every
-		// Unicode-aware reader, and for none of them does this parser, so a file
-		// written with one is a single line here. `A=1<LS>B=2` became one
-		// variable holding the rest of the secrets, and a '#' first line made the
-		// whole file vanish into the comment skip — the CR defect exactly, one
-		// encoding over. Named by codepoint because there is nothing to show.
-		if strings.IndexFunc(line, isUnicodeLineSeparator) >= 0 {
-			return nil, yoerrors.NewUsageError("--env-file line %d: contains a Unicode line separator (U+0085, U+2028 or U+2029) that this parser does not split on — use LF or CRLF line endings", lineNo)
+		// And the same rule for every other line terminator the LF split cannot
+		// see — VT, FF, NEL, LS, PS (containsUnsplitLineTerminator). Each makes a
+		// file a single line here: `A=1<LS>B=2` became one variable holding the
+		// rest of the secrets, and a '#' first line made the whole file vanish
+		// into the comment skip. That is the CR defect exactly, one encoding over,
+		// so it gets the CR rule rather than a narrower one aimed at whichever
+		// codepoint was reported. Named by codepoint because there is nothing to
+		// show.
+		if containsUnsplitLineTerminator(line) {
+			return nil, yoerrors.NewUsageError("--env-file line %d: contains a line terminator this parser does not split on (VT, FF, U+0085, U+2028 or U+2029) — use LF or CRLF line endings", lineNo)
 		}
 		if strings.ContainsRune(line, 0) {
 			return nil, yoerrors.NewUsageError("--env-file line %d: contains a NUL byte, which no environment variable can carry", lineNo)

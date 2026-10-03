@@ -14,11 +14,13 @@ API keys are injected via **file-based credential injection** following OWASP an
 3. The container entrypoint reads the file(s), exports the appropriate env var(s) (since CLI agents expect credentials as env vars), then launches the agent.
 4. The host-side temp file is cleaned up immediately after container start.
 
-That covers the **agent's own** credential, which yoloAI takes from its own environment. A **user's own** secrets — a registry token, a database password — arrive through a flag, and the flag to use is `--env-file <path>` (or `--env-file -` for stdin), on `new`, `run`, `start`, `restart` and `reset`. `--env KEY=VAL` puts the value on yoloai's command line, where another local account can usually read it with `ps -ww`, and re-exposes it on every `start`; `--env-file` puts only the path there. The same applies to the config `env:` key and to a profile's: both are files that stay files, and a safe bug report redacts a config value only when its *key name* reads as sensitive, so a secret under an ordinary name is published ([DF237](findings-unresolved.md)). Prefer `--env-file` to `env:` for anything secret. User-facing detail: [GUIDE.md § Passing secrets to the sandbox](../../GUIDE.md#passing-secrets-to-the-sandbox).
-
 **What this protects against:** `docker inspect` does not show the key. `docker commit` does not capture it. `docker logs` does not leak it. No temp file lingers on host disk. Image layers never contain the key.
 
 **Accepted tradeoff:** The agent process has the API key in its environment (unavoidable — CLI agents read credentials from env vars). `/proc/<pid>/environ` exposes it to same-user processes inside the container. This is acceptable because the agent already has full use of the key.
+
+### A user's own secrets go through --env-file, not config
+
+That covers the **agent's own** credential, which yoloAI takes from its own environment. A **user's own** secrets — a registry token, a database password — arrive through a flag, and the flag to use is `--env-file <path>` (or `--env-file -` for stdin), on `new`, `run`, `start`, `restart` and `reset`. `--env KEY=VAL` puts the value on yoloai's command line, where another local account can usually read it with `ps -ww`, and re-exposes it on every `start`; `--env-file` puts only the path there. The same applies to the config `env:` key and to a profile's: both are files that stay files, and a safe bug report redacts a config value only when its *key name* reads as sensitive, so a secret under an ordinary name is published ([DF237](findings-unresolved.md)). Prefer `--env-file` to `env:` for anything secret. User-facing detail: [GUIDE.md § Passing secrets to the sandbox](../../GUIDE.md#passing-secrets-to-the-sandbox).
 
 The user sets the appropriate API key in their host shell profile (`ANTHROPIC_API_KEY` for Claude, `CODEX_API_KEY` or `OPENAI_API_KEY` for Codex). yoloAI reads the required key(s) from the host environment at sandbox creation time based on the agent definition.
 
@@ -58,7 +60,7 @@ This was empirically validated on a real Linux + gVisor host — see resolved fi
 - Container-writable directories: `logs/`, `work/`, `agent-runtime/`, `files/`, `cache/`
 - Log files: `sandbox.jsonl`, `monitor.jsonl`, `agent-hooks.jsonl`
 - Status files: `agent-status.json`
-- Temporary secrets directory (exists only during container startup, removed within seconds; 0700 dir / 0600 files)
+- Secrets directory (0700 dir / 0600 files). On the container backends it is a host-side staging directory removed once the container has started, so it exists only during startup. On seatbelt and tart the files are copied into the sandbox's own read-only tier instead and are **not** removed after the guest reads them — tart clears them when the VM is deleted, seatbelt not at all ([DF240](findings-unresolved.md))
 
 **Host-only directories** (not bind-mounted) always use restrictive 0750 permissions: `home-seed/`, `bin/`, `tmux/`, `backend/`.
 

@@ -74,84 +74,104 @@ func TestBugReportFilename_Collision(t *testing.T) {
 	assert.Contains(t, err.Error(), "already exists")
 }
 
-// --- redactPromptArgs ---
+// --- redactArgs ---
 
-func TestRedactPromptArgs_LongForm(t *testing.T) {
-	args := []string{"yoloai", "--prompt", "secret task"}
-	result := redactPromptArgs(args)
-	assert.Equal(t, "yoloai", result[0])
-	assert.Equal(t, "--prompt", result[1])
-	assert.Equal(t, "[REDACTED]", result[2])
+// safe is the report type that redacts prompts; unsafe publishes them by design.
+const (
+	safeReport   = "safe"
+	unsafeReport = "unsafe"
+)
+
+func TestRedactArgs_PromptForms(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"long form", []string{"yoloai", "--prompt", "secret task"}, []string{"yoloai", "--prompt", "[REDACTED]"}},
+		{"shorthand", []string{"yoloai", "-p", "secret task"}, []string{"yoloai", "-p", "[REDACTED]"}},
+		{"equals form", []string{"yoloai", "--prompt=secret task"}, []string{"yoloai", "--prompt=[REDACTED]"}},
+		// cobra takes `-p=<text>` too, and only the long form's '=' spelling was
+		// matched, so this published the prompt in a safe report.
+		{"shorthand equals form", []string{"yoloai", "-p=secret task"}, []string{"yoloai", "-p=[REDACTED]"}},
+		{"other flags unchanged", []string{"--agent", "claude"}, []string{"--agent", "claude"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, redactArgs(tc.args, safeReport))
+		})
+	}
 }
 
-func TestRedactPromptArgs_ShortForm(t *testing.T) {
-	args := []string{"yoloai", "-p", "secret task"}
-	result := redactPromptArgs(args)
-	assert.Equal(t, "-p", result[1])
-	assert.Equal(t, "[REDACTED]", result[2])
+func TestRedactArgs_EnvForms(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"space form", []string{"yoloai", "--env", "API_TOKEN=s3cret"}, []string{"yoloai", "--env", "API_TOKEN=[REDACTED]"}},
+		{"equals form", []string{"yoloai", "--env=API_TOKEN=s3cret"}, []string{"yoloai", "--env=API_TOKEN=[REDACTED]"}},
+		// Malformed as a --env value, so it is not a bare variable name to be
+		// published — it could be anything, including the secret on its own.
+		{"value without an equals is redacted whole", []string{"--env", "s3cret"}, []string{"--env", "[REDACTED]"}},
+		// The path is diagnostic and holds no secret itself, and this is the
+		// prefix most likely to be over-matched.
+		{"leaves --env-file alone", []string{"--env-file", "/tmp/secrets.env", "--env-file=/tmp/o.env"}, []string{"--env-file", "/tmp/secrets.env", "--env-file=/tmp/o.env"}},
+		{"a trailing valueless --env has nothing to redact", []string{"yoloai", "--env"}, []string{"yoloai", "--env"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, rt := range []string{safeReport, unsafeReport} {
+				assert.Equal(t, tc.want, redactArgs(tc.args, rt), rt)
+			}
+		})
+	}
 }
 
-func TestRedactPromptArgs_EqualsForm(t *testing.T) {
-	args := []string{"yoloai", "--prompt=secret task"}
-	result := redactPromptArgs(args)
-	assert.Equal(t, "--prompt=[REDACTED]", result[1])
-}
-
-func TestRedactPromptArgs_OtherFlagsUnchanged(t *testing.T) {
-	args := []string{"--agent", "claude"}
-	result := redactPromptArgs(args)
-	assert.Equal(t, "--agent", result[0])
-	assert.Equal(t, "claude", result[1])
-}
-
-// --- redactEnvArgs ---
-
-func TestRedactEnvArgs_SpaceForm(t *testing.T) {
-	result := redactEnvArgs([]string{"yoloai", "--env", "API_TOKEN=s3cret"})
-	assert.Equal(t, []string{"yoloai", "--env", "API_TOKEN=[REDACTED]"}, result)
-}
-
-func TestRedactEnvArgs_EqualsForm(t *testing.T) {
-	result := redactEnvArgs([]string{"yoloai", "--env=API_TOKEN=s3cret"})
-	assert.Equal(t, []string{"yoloai", "--env=API_TOKEN=[REDACTED]"}, result)
-}
-
-func TestRedactEnvArgs_ValueWithoutAnEqualsIsRedactedWhole(t *testing.T) {
-	// Malformed as a --env value, so it is not a bare variable name to be
-	// published — it could be anything, including the secret on its own.
-	result := redactEnvArgs([]string{"--env", "s3cret"})
-	assert.Equal(t, []string{"--env", "[REDACTED]"}, result)
-}
-
-// TestRedactEnvArgs_LeavesEnvFileAlone: the path is diagnostic and holds no
-// secret itself, and this is also the prefix most likely to be over-matched.
-func TestRedactEnvArgs_LeavesEnvFileAlone(t *testing.T) {
-	args := []string{"--env-file", "/tmp/secrets.env", "--env-file=/tmp/other.env"}
-	assert.Equal(t, args, redactEnvArgs(args))
-}
-
-// TestRedactEnvArgs_ARepeatedFlagDoesNotHideTheValue: the redactor rewrites a
-// copy of argv, and reading its decisions from that copy let one redaction hide
-// the next flag. `--env --env KEY=VAL` is a duplicated-flag typo, which fails —
-// and a failure is when a user reaches for --bugreport. Reverting either loop to
-// range over `result` turns this red.
-func TestRedactEnvArgs_ARepeatedFlagDoesNotHideTheValue(t *testing.T) {
-	result := redactEnvArgs([]string{"yoloai", "new", "--env", "--env", "API_TOKEN=s3cret"})
-	assert.NotContains(t, strings.Join(result, " "), "s3cret")
-	assert.Equal(t, []string{"yoloai", "new", "--env", "[REDACTED]", "API_TOKEN=[REDACTED]"}, result)
-}
-
-// The same defect on the sibling redactor, found by grepping for the shape
-// (AGENTS.md rule 7) rather than by a second report.
-func TestRedactPromptArgs_ARepeatedFlagDoesNotHideTheValue(t *testing.T) {
-	result := redactPromptArgs([]string{"yoloai", "new", "--prompt", "--prompt", "secret prompt"})
-	assert.NotContains(t, strings.Join(result, " "), "secret prompt")
-	assert.Equal(t, []string{"yoloai", "new", "--prompt", "[REDACTED]", "[REDACTED]"}, result)
-}
-
-func TestRedactEnvArgs_OtherFlagsUnchanged(t *testing.T) {
-	args := []string{"--agent", "claude", "--prompt", "fix the build"}
-	assert.Equal(t, args, redactEnvArgs(args))
+// TestRedactArgs_NoRewriteHidesAnotherRule is the property, not the argv shapes:
+// every rule decides from the untouched argv, so one redaction can never
+// overwrite the token another rule is looking for. Each case below leaked before
+// — the first two by walking the slice being rewritten, the last two by chaining
+// one redactor over the other's output — and each is an ordinary duplicated-flag
+// typo, which fails, which is when a user reaches for --bugreport.
+func TestRedactArgs_NoRewriteHidesAnotherRule(t *testing.T) {
+	tests := []struct {
+		name   string
+		args   []string
+		secret string
+		want   []string
+	}{
+		{
+			"--env twice", []string{"yoloai", "new", "--env", "--env", "API_TOKEN=s3cret"}, "s3cret",
+			[]string{"yoloai", "new", "--env", "[REDACTED]", "API_TOKEN=[REDACTED]"},
+		},
+		{
+			"--prompt twice", []string{"yoloai", "new", "--prompt", "--prompt", "secret prompt"}, "secret prompt",
+			[]string{"yoloai", "new", "--prompt", "[REDACTED]", "[REDACTED]"},
+		},
+		{
+			"--env then --prompt", []string{"yoloai", "new", "--env", "--prompt", "secret prompt"}, "secret prompt",
+			[]string{"yoloai", "new", "--env", "[REDACTED]", "[REDACTED]"},
+		},
+		{
+			"--env then -p", []string{"yoloai", "new", "--env", "-p", "secret prompt"}, "secret prompt",
+			[]string{"yoloai", "new", "--env", "[REDACTED]", "[REDACTED]"},
+		},
+		{
+			"--prompt then --env", []string{"yoloai", "new", "--prompt", "--env", "API_TOKEN=s3cret"}, "s3cret",
+			[]string{"yoloai", "new", "--prompt", "[REDACTED]", "API_TOKEN=[REDACTED]"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := redactArgs(tc.args, safeReport)
+			assert.NotContains(t, strings.Join(got, " "), tc.secret)
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }
 
 // TestWriteCommandInvocation_RedactsEnvInBothReportTypes pins the one place this
@@ -184,6 +204,23 @@ func TestWriteCommandInvocation_RedactsEnvInBothReportTypes(t *testing.T) {
 			})
 		}
 	}
+}
+
+// TestWriteCommandInvocation_BothRulesHoldThroughTheRealEntryPoint goes through
+// the function that ships, not the redactor underneath it. The two leaks this
+// section has had were both at a seam a unit test did not cross: one inside a
+// loop, one between two chained redactors. Only this entry point exercises the
+// composition, so a future split back into chained passes goes red here.
+func TestWriteCommandInvocation_BothRulesHoldThroughTheRealEntryPoint(t *testing.T) {
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
+
+	os.Args = []string{"yoloai", "new", "box", ".", "--env", "--prompt", "secret prompt", "--env", "API_TOKEN=s3cret"}
+	var buf bytes.Buffer
+	WriteCommandInvocation(&buf, "safe")
+	assert.NotContains(t, buf.String(), "secret prompt", "the prompt survived a safe report")
+	assert.NotContains(t, buf.String(), "s3cret")
+	assert.Contains(t, buf.String(), "API_TOKEN=[REDACTED]")
 }
 
 // --- sanitizeYAMLConfig ---

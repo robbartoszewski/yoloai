@@ -31,7 +31,7 @@ func (c *AgentFilesConfig) IsStringForm() bool {
 // YoloaiConfig holds the subset of config.yaml fields that the Go code reads.
 type YoloaiConfig struct {
 	OS                 string            `yaml:"os"`                   // os — guest OS: linux, mac
-	ContainerBackend   string            `yaml:"container_backend"`    // container_backend — runtime backend: docker, podman, containerd
+	ContainerBackend   string            `yaml:"container_backend"`    // container_backend — preferred container-slot backend: docker or podman
 	TartImage          string            `yaml:"tart_image"`           // tart.image — custom base VM image for tart backend
 	Agent              string            `yaml:"agent"`                // agent
 	Model              string            `yaml:"model"`                // model

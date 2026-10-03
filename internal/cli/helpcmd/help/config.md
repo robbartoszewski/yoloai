@@ -22,8 +22,10 @@ KEY SETTINGS
 
   agent              Agent to use (default: claude)
   model              Model name or alias (default: agent's default)
-  container_backend  Runtime backend: docker, podman, containerd, apple,
-                     tart, seatbelt
+  container_backend  Which backend to prefer for Linux containers: docker
+                     or podman, plus apple on macOS. containerd, tart and
+                     seatbelt are not in that slot and are ignored here;
+                     use --backend to pick any backend for one command.
   isolation          Isolation mode (container backends only): container,
                      container-enhanced (gVisor), container-privileged,
                      vm (Kata+QEMU), vm-enhanced (Kata+Firecracker).

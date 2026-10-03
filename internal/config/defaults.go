@@ -89,8 +89,11 @@ resources:
 # Set per agent: agent_args.aider, agent_args.claude, etc.
 agent_args: {}
 
-# Environment variables forwarded to the container via /run/secrets/.
-# Supports ${VAR} expansion. WARNING: expanded values are machine-specific.
+# Environment variables forwarded to the sandbox. Delivered as owner-only
+# files on most backends, or straight into the agent's environment where the
+# backend takes one; either way this file keeps the value, so do not put a
+# secret here -- pass it with --env-file. Supports ${VAR} expansion.
+# WARNING: expanded values are machine-specific.
 env: {}
 
 # Seconds between automatic git commits in :copy directories. 0 = disabled.

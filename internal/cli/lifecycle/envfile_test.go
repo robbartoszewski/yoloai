@@ -33,7 +33,13 @@ const envFileSecret = "s3cret#value "
 var (
 	lsSep  = string(rune(0x2028)) // LINE SEPARATOR
 	psSep  = string(rune(0x2029)) // PARAGRAPH SEPARATOR
-	nelSep = string(rune(0x0085)) // NEXT LINE
+	nelSep = string(rune(0x0085)) // NEXT LINE, UTF-8 (0xC2 0x85)
+	vtSep  = "\v"                 // LINE TABULATION
+	ffSep  = "\f"                 // FORM FEED
+	// NEL as a single byte, which is how Latin-1, CP1252 and an
+	// EBCDIC conversion carry it. Invalid UTF-8, so a rune-wise scan sees
+	// RuneError and never the codepoint — the case that needs its own fixture.
+	nelByteSep = "\x85"
 )
 
 // writeEnvFile writes body to a temp file and returns its path.
@@ -66,6 +72,10 @@ func TestParseEnvFileData_Rules(t *testing.T) {
 		// Editors write a BOM invisibly. Without stripping it the first key is
 		// unmatchable for a reason the user cannot see in their own file.
 		{"leading UTF-8 BOM", "\ufeffA=1\nB=2\n", map[string]string{"A": "1", "B": "2"}},
+		// A value need not be valid UTF-8 — a password in a legacy encoding is
+		// still a password. Only the byte that is a *line terminator* is refused,
+		// so this must keep parsing or the NEL-byte check has over-reached.
+		{"a non-NEL invalid byte is value", "A=caf\xe9\n", map[string]string{"A": "caf\xe9"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -111,10 +121,15 @@ func TestParseEnvFileData_Errors(t *testing.T) {
 		// over: `A=1<LS>B=2` was one variable holding the rest of the secrets, and
 		// a '#' first line sent the whole file into the comment skip — an empty
 		// environment, silently, exit 0.
-		{"LS-separated file", "A=1" + lsSep + "B=" + envFileSecret + "\n", "line 1: contains a Unicode line separator"},
-		{"PS-separated file", "A=1" + psSep + "B=" + envFileSecret + "\n", "line 1: contains a Unicode line separator"},
-		{"NEL-separated file", "A=1" + nelSep + "B=" + envFileSecret + "\n", "line 1: contains a Unicode line separator"},
-		{"LS-separated file starting with a comment", "# secrets" + lsSep + "A=" + envFileSecret + lsSep, "line 1: contains a Unicode line separator"},
+		{"LS-separated file", "A=1" + lsSep + "B=" + envFileSecret + "\n", "line 1: contains a line terminator"},
+		{"PS-separated file", "A=1" + psSep + "B=" + envFileSecret + "\n", "line 1: contains a line terminator"},
+		{"NEL-separated file", "A=1" + nelSep + "B=" + envFileSecret + "\n", "line 1: contains a line terminator"},
+		{"VT-separated file", "A=1" + vtSep + "B=" + envFileSecret + "\n", "line 1: contains a line terminator"},
+		{"FF-separated file", "A=1" + ffSep + "B=" + envFileSecret + "\n", "line 1: contains a line terminator"},
+		// Invalid UTF-8, so the codepoint check cannot see it.
+		{"NEL as a lone legacy byte", "A=1" + nelByteSep + "B=" + envFileSecret + "\n", "line 1: contains a line terminator"},
+		{"LS-separated file starting with a comment", "# secrets" + lsSep + "A=" + envFileSecret + lsSep, "line 1: contains a line terminator"},
+		{"FF-separated file starting with a comment", "# secrets" + ffSep + "A=" + envFileSecret + "\n", "line 1: contains a line terminator"},
 		{"NUL byte", "A=x\x00" + envFileSecret + "\n", "line 1: contains a NUL byte"},
 		{"NUL byte in a comment", "#x\x00" + envFileSecret + "\nA=1\n", "line 1: contains a NUL byte"},
 		// An invisible character cannot be shown in a message that must not quote

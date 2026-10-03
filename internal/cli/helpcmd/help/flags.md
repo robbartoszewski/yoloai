@@ -18,7 +18,7 @@ CREATING SANDBOXES (yoloai new)
   --env KEY=VAL       Environment variable (repeatable). Not for secrets:
                       the value is on yoloai's command line, which
                       other local users can usually read with 'ps'
-                      (always on macOS; on Linux without hidepid)
+                      — see: yoloai help security
   --env-file <path>   Read env vars from a file of KEY=VAL lines, or from
                       stdin with '-'. Use this for secrets. Also on
                       run, start, restart and reset.
