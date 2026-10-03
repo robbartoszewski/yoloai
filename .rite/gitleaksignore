@@ -1,0 +1,41 @@
+# Per-finding suppressions for rite's publish gate, one entry per line:
+#
+#     <fingerprint>  # <reason>
+#
+# `rite publish check` prints the fingerprint to copy. A reason is required; an
+# entry without one is a parse error, not a silent no-op.
+#
+# WHY THERE ARE ANY. Every entry below is one of the gate's always-on
+# hardcoded-home-directory rules, and every covered line is already on `main`.
+# The gate demotes a pre-existing finding to a warning only when the push does
+# not touch its file, so a change to any of these eight files surfaces every
+# home-shaped path that file already contained. There are around 400 more in the
+# rest of the tree, and the same block comes back for whoever touches these files
+# next: DF241 in docs/contributors/design/findings-unresolved.md.
+#
+# WHAT AN ENTRY COVERS. The fingerprint's last field is `sha256-<digest>` of
+# what was found, so an entry is scoped to (file, rule, matched string) and NOT
+# to a line — deliberately, because the line form goes stale when anything above
+# it moves. One entry therefore covers every occurrence of that string in that
+# file, including ones added later; the gate prints `one entry covers N findings`
+# but never escalates on N growing. Read that line.
+#
+# Each reason below was written from the reported line, not from the file name.
+# None of the matched text is a secret. Two of them are a contributor's own name
+# used as an example, and say so.
+
+# A placeholder username in prose and in sample command output.
+-:docs/GUIDE.md:rite-hardcoded-macos-home-directory-path:sha256-45c1386eb381f8d5be4342bedf020534  # a placeholder macOS home, three times in the Swift PCH example — twice inside a quoted compiler error
+-:docs/contributors/design/commands.md:rite-hardcoded-linux-home-directory-path:sha256-768d8e132161678a3434401db0b60a64  # a placeholder Linux home, in the example container layout, the caret-encoding example, and three lines of sample creation output
+-:docs/contributors/design/reconfigure.md:rite-hardcoded-linux-home-directory-path:sha256-768d8e132161678a3434401db0b60a64  # the same placeholder Linux home, in one line of sample reconfigure output
+-:docs/contributors/design/bugreport.md:rite-hardcoded-linux-home-directory-path:sha256-4313da3875e33956eb083af034a75771  # an invented Linux path in a sample log line, using the maintainer's first name as the example user (DF241)
+
+# The guest's own fixed account, which is the fact each line is stating. Not a
+# host path, and not a username anybody chose.
+-:docs/contributors/design/commands.md:rite-hardcoded-macos-home-directory-path:sha256-09adf2a74acae2053873f7856e4a2b00  # Tart's fixed in-guest home, in the files-sharing table's Tart row
+-:internal/orchestrator/create/prepare_dirs.go:rite-hardcoded-macos-home-directory-path:sha256-09adf2a74acae2053873f7856e4a2b00  # the same in-guest location, in a comment on where tart maps host dirs inside the guest
+
+# Code and test fixtures.
+-:internal/cli/bugreport/writer.go:rite-hardcoded-macos-home-directory-path:sha256-387fdb1ce53197b01e6011b6c4644d77  # an elided path shape in a comment on why the long-base64 pattern excludes a slash; the username is literally `...`
+-:internal/cli/bugreport/writer_test.go:rite-hardcoded-macos-home-directory-path:sha256-e5108177ef676e3e461504fb3e4f4caa  # the maintainer's real home and project layout, as the fixture for TestSanitizeText_PreservesFilesystemPaths — which asserts sanitizeText leaves a long path UNREDACTED. The test needs a long path containing a slash; the username is incidental and could be a placeholder. Pre-existing on main and already published, so suppressed rather than rewritten by a ticket that is not a path sweep (DF241)
+-:internal/cli/lifecycle/new_test.go:rite-hardcoded-linux-home-directory-path:sha256-9c1db200d6946643f74027045b8f6cfa  # a placeholder Linux path passed as the NAME argument to resolveCreateOptions, in the "path passed as name (swapped args)" subtest
