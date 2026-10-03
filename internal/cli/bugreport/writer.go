@@ -92,6 +92,10 @@ func redactPromptArgs(args []string) []string {
 //
 // --env-file is not matched here, and must not be: its value is a path, which is
 // diagnostic, and the secrets are in the file, which this report never reads.
+//
+// This covers one flag on one surface. The report's redactors are per-surface and
+// do not share a rule — the config section matches key names only, and the exit
+// line has no redactor at all — which is parked as DF237, not fixed here.
 func redactEnvArgs(args []string) []string {
 	result := make([]string, len(args))
 	copy(result, args)
